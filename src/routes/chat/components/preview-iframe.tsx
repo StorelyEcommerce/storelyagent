@@ -9,6 +9,7 @@ interface PreviewIframeProps {
     shouldRefreshPreview?: boolean;
     manualRefreshTrigger?: number;
     webSocket?: WebSocket | null;
+    shouldLoad?: boolean; // Controls whether preview should start loading
 }
 
 // ============================================================================
@@ -38,7 +39,7 @@ const getRetryDelay = (attempt: number): number => {
 // ============================================================================
 
 export const PreviewIframe = forwardRef<HTMLIFrameElement, PreviewIframeProps>(
-	({ src, className = '', title = 'Preview', shouldRefreshPreview = false, manualRefreshTrigger, webSocket }, ref) => {
+	({ src, className = '', title = 'Preview', shouldRefreshPreview = false, manualRefreshTrigger, webSocket, shouldLoad = true }, ref) => {
 		
 		const [loadState, setLoadState] = useState<LoadState>({
 			status: 'idle',
@@ -255,10 +256,31 @@ export const PreviewIframe = forwardRef<HTMLIFrameElement, PreviewIframeProps>(
 		// ====================================================================
 
 		/**
-		 * Effect: Load when src changes
+		 * Effect: Load when src changes and shouldLoad is true
 		 */
 		useEffect(() => {
-			if (!src) return;
+			if (!src || !shouldLoad) {
+				// If shouldLoad is false, reset to idle state but don't start loading
+				if (!shouldLoad && src) {
+					console.log('Preview loading paused - code generation in progress');
+					setLoadState({
+						status: 'idle',
+						attempt: 0,
+						loadedSrc: null,
+						errorMessage: null,
+					});
+					// Clear any pending retries
+					if (retryTimeoutRef.current) {
+						clearTimeout(retryTimeoutRef.current);
+						retryTimeoutRef.current = null;
+					}
+					if (postLoadTimeoutRef.current) {
+						clearTimeout(postLoadTimeoutRef.current);
+						postLoadTimeoutRef.current = null;
+					}
+				}
+				return;
+			}
 
 			console.log('Preview src changed, starting load:', src);
 			hasRequestedRedeployRef.current = false;
@@ -292,7 +314,7 @@ export const PreviewIframe = forwardRef<HTMLIFrameElement, PreviewIframeProps>(
 					postLoadTimeoutRef.current = null;
 				}
 			};
-		}, [src, loadWithRetry]);
+		}, [src, shouldLoad, loadWithRetry]);
 
 		/**
 		 * Effect: Auto-refresh after deployment
@@ -379,12 +401,14 @@ export const PreviewIframe = forwardRef<HTMLIFrameElement, PreviewIframeProps>(
 					<div className="text-center p-8 max-w-md">
 						<RefreshCw className="size-8 text-accent animate-spin mx-auto mb-4" />
 						<h3 className="text-lg font-medium text-text-primary mb-2">
-							Loading Preview
+							{!shouldLoad ? 'Waiting for Code Generation' : 'Loading Preview'}
 						</h3>
 						<p className="text-text-primary/70 text-sm mb-4">
-							{loadState.attempt === 0
-								? 'Checking if your deployed preview is ready...'
-								: `Preview not ready yet. Retrying in ${delaySeconds}s... (attempt ${loadState.attempt}/${MAX_RETRIES})`
+							{!shouldLoad
+								? 'Preview will load once code generation is complete...'
+								: loadState.attempt === 0
+									? 'Checking if your deployed preview is ready...'
+									: `Preview not ready yet. Retrying in ${delaySeconds}s... (attempt ${loadState.attempt}/${MAX_RETRIES})`
 							}
 						</p>
 						{loadState.attempt >= REDEPLOY_AFTER_ATTEMPT && (

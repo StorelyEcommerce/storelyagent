@@ -186,6 +186,10 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
                 const status = await client.getInstanceStatus(instanceId);
                 
                 if (!status.success || !status.isHealthy) {
+                    if (this.getState().isDeepDebugging) {  
+                        logger.info("Deep debugging active, skipping redeploy");
+                        return;
+                    }
                     logger.warn(`Instance ${instanceId} unhealthy, triggering redeploy`);
                     this.clearHealthCheckInterval();
                     

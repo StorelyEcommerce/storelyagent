@@ -360,7 +360,9 @@ export default function Chat() {
 	}, [messages.length, scrollToBottom]);
 
 	useEffect(() => {
-		if (previewUrl && !hasSeenPreview.current && isPhase1Complete) {
+		// When preview URL is available, show preview immediately
+		const shouldShowPreview = previewUrl && !hasSeenPreview.current && (isPhase1Complete || previewUrl.includes('trycloudflare.com'));
+		if (shouldShowPreview) {
 			setView('preview');
 			setShowTooltip(true);
 			setTimeout(() => {
@@ -961,6 +963,7 @@ export default function Chat() {
 											manualRefreshTrigger
 										}
 										webSocket={websocket}
+										shouldLoad={!isGenerating}
 									/>
 								</div>
 							)}

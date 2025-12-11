@@ -53,4 +53,5 @@ export interface CodeGenState {
     inferenceContext: InferenceContext;
 
     lastDeepDebugTranscript: string | null;
+    isDeepDebugging?: boolean; // Track if debug session is active
 } 

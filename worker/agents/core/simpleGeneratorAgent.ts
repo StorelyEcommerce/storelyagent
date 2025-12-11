@@ -159,6 +159,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         reviewingInitiated: false,
         projectUpdatesAccumulator: [],
         lastDeepDebugTranscript: null,
+        isDeepDebugging: false,
     };
 
     constructor(ctx: AgentContext, env: Env) {
@@ -285,6 +286,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         this.initializeAsync().catch((error: unknown) => {
             this.broadcastError("Initialization failed", error);
         });
+        
         this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} initialized successfully`);
         await this.saveToDatabase();
         return this.state;
@@ -390,10 +392,20 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
 
     onConnect(connection: Connection, ctx: ConnectionContext) {
         this.logger().info(`Agent connected for agent ${this.getAgentId()}`, { connection, ctx });
-        sendToConnection(connection, 'agent_connected', {
+        
+        // If preview URL is cached, include it in the connection message
+        const connectionData: any = {
             state: this.state,
             templateDetails: this.getTemplateDetails()
-        });
+        };
+        
+        // Include preview URL if available
+        if (this.previewUrlCache) {
+            connectionData.previewURL = this.previewUrlCache;
+            this.logger().info(`Sending cached preview URL to new connection: ${this.previewUrlCache}`);
+        }
+        
+        sendToConnection(connection, 'agent_connected', connectionData);
     }
 
     async ensureTemplateDetails() {
@@ -801,56 +813,77 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             this.logger().info("Code generation already in progress");
             return;
         }
-        this.generationPromise = this.launchStateMachine(reviewCycles);
-        await this.generationPromise;
+        try {
+            this.generationPromise = this.launchStateMachine(reviewCycles);
+            await this.generationPromise;
+        } catch (error) {
+            // Ensure promise is cleared even if launchStateMachine throws before setting it
+            this.logger().error("Error in generateAllFiles, clearing generation promise", error);
+            this.generationPromise = null;
+            throw error;
+        }
     }
 
     private async launchStateMachine(reviewCycles: number) {
-        this.broadcast(WebSocketMessageResponses.GENERATION_STARTED, {
-            message: 'Starting code generation',
-            totalFiles: this.getTotalFiles()
-        });
-        this.logger().info('Starting code generation', {
-            totalFiles: this.getTotalFiles()
-        });
-        await this.ensureTemplateDetails();
-
-        let currentDevState = CurrentDevState.PHASE_IMPLEMENTING;
-        const generatedPhases = this.state.generatedPhases;
-        const incompletedPhases = generatedPhases.filter(phase => !phase.completed);
-        let phaseConcept : PhaseConceptType | undefined;
-        if (incompletedPhases.length > 0) {
-            phaseConcept = incompletedPhases[incompletedPhases.length - 1];
-            this.logger().info('Resuming code generation from incompleted phase', {
-                phase: phaseConcept
-            });
-        } else if (generatedPhases.length > 0) {
-            currentDevState = CurrentDevState.PHASE_GENERATING;
-            this.logger().info('Resuming code generation after generating all phases', {
-                phase: generatedPhases[generatedPhases.length - 1]
-            });
-        } else {
-            phaseConcept = this.state.blueprint.initialPhase;
-            this.logger().info('Starting code generation from initial phase', {
-                phase: phaseConcept
-            });
-            this.createNewIncompletePhase(phaseConcept);
-        }
-
-        let staticAnalysisCache: StaticAnalysisResponse | undefined;
-        let userContext: UserContext | undefined;
-
-        // Store review cycles for later use
-        this.setState({
-            ...this.state,
-            reviewCycles: reviewCycles
-        });
-
         try {
+            this.broadcast(WebSocketMessageResponses.GENERATION_STARTED, {
+                message: 'Starting code generation',
+                totalFiles: this.getTotalFiles()
+            });
+            this.logger().info('Starting code generation', {
+                totalFiles: this.getTotalFiles()
+            });
+            await this.ensureTemplateDetails();
+
+            let currentDevState = CurrentDevState.PHASE_IMPLEMENTING;
+            const generatedPhases = this.state.generatedPhases;
+            const incompletedPhases = generatedPhases.filter(phase => !phase.completed);
+            let phaseConcept : PhaseConceptType | undefined;
+            if (incompletedPhases.length > 0) {
+                phaseConcept = incompletedPhases[incompletedPhases.length - 1];
+                this.logger().info('Resuming code generation from incompleted phase', {
+                    phase: phaseConcept
+                });
+            } else if (generatedPhases.length > 0) {
+                currentDevState = CurrentDevState.PHASE_GENERATING;
+                this.logger().info('Resuming code generation after generating all phases', {
+                    phase: generatedPhases[generatedPhases.length - 1]
+                });
+            } else {
+                phaseConcept = this.state.blueprint.initialPhase;
+                this.logger().info('Starting code generation from initial phase', {
+                    phase: phaseConcept
+                });
+                this.createNewIncompletePhase(phaseConcept);
+            }
+
+            let staticAnalysisCache: StaticAnalysisResponse | undefined;
+            let userContext: UserContext | undefined;
+
+            // Store review cycles for later use
+            this.setState({
+                ...this.state,
+                reviewCycles: reviewCycles
+            });
+
             let executionResults: PhaseExecutionResult;
+            let loopCount = 0;
+            const MAX_LOOP_ITERATIONS = 1000; // Safety limit to prevent infinite loops
+            
             // State machine loop - continues until IDLE state
             while (currentDevState !== CurrentDevState.IDLE) {
-                this.logger().info(`[generateAllFiles] Executing state: ${currentDevState}`);
+                loopCount++;
+                if (loopCount > MAX_LOOP_ITERATIONS) {
+                    const error = new Error(`State machine exceeded maximum iterations (${MAX_LOOP_ITERATIONS}). Current state: ${currentDevState}`);
+                    this.logger().error("State machine loop limit exceeded", { 
+                        currentDevState, 
+                        loopCount,
+                        generatedPhases: this.state.generatedPhases.length 
+                    });
+                    throw error;
+                }
+                
+                this.logger().info(`[generateAllFiles] Executing state: ${currentDevState} (iteration ${loopCount})`);
                 switch (currentDevState) {
                     case CurrentDevState.PHASE_GENERATING:
                         executionResults = await this.executePhaseGeneration();
@@ -872,6 +905,8 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                         currentDevState = await this.executeFinalizing();
                         break;
                     default:
+                        this.logger().warn(`Unknown state encountered: ${currentDevState}, transitioning to IDLE`);
+                        currentDevState = CurrentDevState.IDLE;
                         break;
                 }
             }
@@ -1043,23 +1078,62 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             reviewingInitiated: true
         });
 
-        // If issues/errors found, prompt user if they want to review and cleanup
+        // If issues/errors found, automatically trigger deep debug
         const issues = await this.fetchAllIssues(false);
         if (issues.runtimeErrors.length > 0 || issues.staticAnalysis.typecheck.issues.length > 0) {
-            this.logger().info("Reviewing stage - issues found, prompting user to review and cleanup");
-            const message : ConversationMessage = {
-                role: "assistant",
-                content: `<system_context>If the user responds with yes, launch the 'deep_debug' tool with the prompt to fix all the issues in the app</system_context>\nThere might be some bugs in the app. Do you want me to try to fix them?`,
-                conversationId: IdGenerator.generateConversationId(),
-            }
-            // Store the message in the conversation history so user's response can trigger the deep debug tool
-            this.addConversationMessage(message);
+            this.logger().info("Reviewing stage - issues found, automatically starting deep debug");
             
-            this.broadcast(WebSocketMessageResponses.CONVERSATION_RESPONSE, {
-                message: message.content,
-                conversationId: message.conversationId,
-                isStreaming: false,
-            });
+            // Generate a conversation ID for this debug session
+            const conversationId = IdGenerator.generateConversationId();
+            
+            // Create streamCb - broadcasts LLM text chunks to WebSocket
+            const streamCb = (chunk: string) => {
+                this.broadcast(WebSocketMessageResponses.CONVERSATION_RESPONSE, {
+                    message: chunk,
+                    conversationId,
+                    isStreaming: true,
+                });
+            };
+            
+            // Create toolRenderer - broadcasts tool call events to WebSocket
+            const toolRenderer: RenderToolCall = (args) => {
+                this.broadcast(WebSocketMessageResponses.CONVERSATION_RESPONSE, {
+                    message: '',
+                    conversationId,
+                    isStreaming: false,
+                    tool: args,
+                });
+            };
+            
+            // Build issue description
+            const runtimeErrorCount = issues.runtimeErrors.length;
+            const staticErrorCount = issues.staticAnalysis.typecheck.issues.length;
+            const lintErrorCount = issues.staticAnalysis.lint.issues.length;
+            const issueDescription = `Fix all issues in the app. Runtime errors: ${runtimeErrorCount}, TypeScript errors: ${staticErrorCount}, Lint errors: ${lintErrorCount}`;
+            
+            // Call deep debug directly
+            const deepDebugResult = await this.executeDeepDebug(
+                issueDescription,
+                toolRenderer,
+                streamCb
+            );
+            
+            if (deepDebugResult.success) {
+                this.logger().info("Deep debug successful, issues fixed");
+                // Broadcast completion message
+                this.broadcast(WebSocketMessageResponses.CONVERSATION_RESPONSE, {
+                    message: "Debugging completed. Issues have been fixed.",
+                    conversationId,
+                    isStreaming: false,
+                });
+            } else {
+                this.logger().error("Deep debug failed", { error: deepDebugResult.error });
+                this.broadcast(WebSocketMessageResponses.CONVERSATION_RESPONSE, {
+                    message: `Debugging failed: ${deepDebugResult.error}`,
+                    conversationId,
+                    isStreaming: false,
+                });
+            }
         }
 
         return CurrentDevState.IDLE;
@@ -1111,6 +1185,12 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         
         const debugPromise = (async () => {
             try {
+                // Set debug flag in state
+                this.setState({
+                    ...this.state,
+                    isDeepDebugging: true,
+                });
+
                 const previousTranscript = this.state.lastDeepDebugTranscript ?? undefined;
                 const operationOptions = this.getOperationOptions();
                 const filesIndex = operationOptions.context.allFiles
@@ -1146,6 +1226,11 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             } finally{
                 this.deepDebugPromise = null;
                 this.deepDebugConversationId = null;
+                // Clear debug flag in state
+                this.setState({
+                    ...this.state,
+                    isDeepDebugging: false,
+                });
             }
         })();
 
@@ -1474,6 +1559,17 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
 
             return analysisResponse;
         } catch (error) {
+            // If sandbox isn't ready yet, this is expected
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            if (errorMessage.includes('No sandbox instance available')) {
+                this.logger().info('Static analysis skipped: sandbox not ready yet');
+                // Return empty results instead of broadcasting error
+                return { 
+                    success: false, 
+                    lint: { issues: [], summary: { errorCount: 0, warningCount: 0, infoCount: 0 } }, 
+                    typecheck: { issues: [], summary: { errorCount: 0, warningCount: 0, infoCount: 0 } } 
+                };
+            }
             this.broadcastError("Failed to lint code", error);
             return { success: false, lint: { issues: [], }, typecheck: { issues: [], } };
         }
@@ -1809,6 +1905,11 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                     this.broadcast(WebSocketMessageResponses.DEPLOYMENT_STARTED, data);
                 },
                 onCompleted: (data) => {
+                    // Cache preview URL for later connections
+                    if (data.previewURL) {
+                        this.previewUrlCache = data.previewURL;
+                        this.logger().info(`Cached preview URL: ${data.previewURL}`);
+                    }
                     this.broadcast(WebSocketMessageResponses.DEPLOYMENT_COMPLETED, data);
                 },
                 onError: (data) => {
@@ -1820,6 +1921,11 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 }
             }
         );
+
+        // Also cache preview URL from result if available
+        if (result?.previewURL) {
+            this.previewUrlCache = result.previewURL;
+        }
 
         return result;
     }

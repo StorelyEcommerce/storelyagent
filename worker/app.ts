@@ -84,7 +84,7 @@ export function createApp(env: Env): Hono<AppEnv> {
     })
 
     // By default, all routes require authentication
-    app.use('/api/*', setAuthLevel(AuthConfig.ownerOnly));
+    app.use('/api/*', setAuthLevel(AuthConfig.authenticated));
 
     // Now setup all the routes
     setupRoutes(app);

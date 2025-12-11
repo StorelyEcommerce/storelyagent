@@ -57,6 +57,21 @@ export interface TemplateInfo {
 }
 
 const templateDetailsCache: Record<string, TemplateDetails> = {};
+
+/**
+ * Clear the template details cache. Call this when templates are updated in R2.
+ */
+export function clearTemplateCache(templateName?: string) {
+    if (templateName) {
+        delete templateDetailsCache[templateName];
+        console.log(`Template cache cleared for: ${templateName}`);
+    } else {
+        for (const key of Object.keys(templateDetailsCache)) {
+            delete templateDetailsCache[key];
+        }
+        console.log('All template caches cleared');
+    }
+}
   
 /**
  * Abstract base class providing complete RunnerService API compatibility
@@ -122,32 +137,60 @@ export abstract class BaseSandboxService {
     static async getTemplateDetails(templateName: string, downloadDir?: string): Promise<TemplateDetailsResponse> {
         try {
             if (templateDetailsCache[templateName]) {
-                console.log(`Template details for template: ${templateName} found in cache`);
+                const cached = templateDetailsCache[templateName];
+                const cachedPackageJson = cached.deps;
+                console.log(`\n${'='.repeat(60)}`);
+                console.log(`📋 USING CACHED TEMPLATE: ${templateName}`);
+                console.log(`${'='.repeat(60)}`);
+                console.log(`📦 CACHED NAME: ${cachedPackageJson?.name || 'N/A'}`);
+                console.log(`📦 CACHED DEV SCRIPT: ${cachedPackageJson?.scripts?.dev || 'N/A'}`);
+                console.log(`📁 CACHED FILES COUNT: ${Object.keys(cached.allFiles || {}).length}`);
+                console.log(`📁 HAS WORKER DIR: ${Object.keys(cached.allFiles || {}).some(f => f.startsWith('worker/'))}`);
+                console.log(`📁 HAS ADMIN-APP DIR: ${Object.keys(cached.allFiles || {}).some(f => f.startsWith('admin-app/'))}`);
+                console.log(`${'='.repeat(60)}\n`);
                 return {
                     success: true,
-                    templateDetails: templateDetailsCache[templateName]
+                    templateDetails: cached
                 };
             }
             // Download template zip from R2
             const downloadUrl = downloadDir ? `${downloadDir}/${templateName}.zip` : `${templateName}.zip`;
+            console.log(`📥 TEMPLATE DOWNLOAD: Looking for "${downloadUrl}" in R2 bucket`);
+            
             const r2Object = await env.TEMPLATES_BUCKET.get(downloadUrl);
               
             if (!r2Object) {
+                console.log(`❌ TEMPLATE NOT FOUND: "${downloadUrl}" does not exist in bucket`);
                 throw new Error(`Template '${templateName}' not found in bucket`);
             }
         
             const zipData = await r2Object.arrayBuffer();
+            console.log(`✅ TEMPLATE DOWNLOADED: ${zipData.byteLength} bytes`);
             
             // Extract all files in memory
             const allFiles = ZipExtractor.extractFiles(zipData);
+            console.log(`📂 EXTRACTED FILES: ${allFiles.length} files from zip`);
+            
+            // Log first 10 file paths for debugging
+            const filePaths = allFiles.slice(0, 10).map(f => f.filePath);
+            console.log(`📂 SAMPLE FILES: ${filePaths.join(', ')}${allFiles.length > 10 ? '...' : ''}`);
             
             // Build file tree
             const fileTree = FileTreeBuilder.buildFromTemplateFiles(allFiles, { rootPath: '.' });
             
-            // Extract dependencies from package.json
+            // Extract package.json (full content for scripts, dependencies, etc.)
             const packageJsonFile = allFiles.find(f => f.filePath === 'package.json');
+            console.log(`📦 PACKAGE.JSON FOUND: ${packageJsonFile ? 'YES' : 'NO'}`);
+            if (packageJsonFile) {
+                console.log(`📦 PACKAGE.JSON PATH: "${packageJsonFile.filePath}"`);
+                console.log(`📦 PACKAGE.JSON SIZE: ${packageJsonFile.fileContents.length} chars`);
+            }
+            
             const packageJson = packageJsonFile ? JSON.parse(packageJsonFile.fileContents) : null;
-            const dependencies = packageJson?.dependencies || {};
+            if (packageJson) {
+                console.log(`📦 PACKAGE.JSON NAME: ${packageJson.name || 'N/A'}`);
+                console.log(`📦 PACKAGE.JSON SCRIPTS: ${Object.keys(packageJson.scripts || {}).join(', ') || 'NONE'}`);
+            }
             
             // Parse metadata files
             const dontTouchFile = allFiles.find(f => f.filePath === '.donttouch_files.json');
@@ -186,7 +229,7 @@ export abstract class BaseSandboxService {
                 fileTree,
                 allFiles: filesMap,
                 language: catalogInfo?.language,
-                deps: dependencies,
+                deps: packageJson,
                 importantFiles,
                 dontTouchFiles,
                 redactedFiles,
@@ -194,6 +237,23 @@ export abstract class BaseSandboxService {
             };
 
             templateDetailsCache[templateName] = templateDetails;
+            
+            // Comprehensive debug logging for template verification
+            console.log(`\n${'='.repeat(60)}`);
+            console.log(`🆕 FRESH TEMPLATE LOADED FROM R2: ${templateName}`);
+            console.log(`${'='.repeat(60)}`);
+            console.log(`📦 TEMPLATE NAME: ${packageJson?.name || 'N/A'}`);
+            console.log(`📦 TEMPLATE VERSION: ${packageJson?.version || 'N/A'}`);
+            console.log(`📦 DEV SCRIPT: ${packageJson?.scripts?.dev || 'N/A'}`);
+            console.log(`📦 BUILD SCRIPT: ${packageJson?.scripts?.build || 'N/A'}`);
+            console.log(`📦 POSTINSTALL: ${packageJson?.scripts?.postinstall || 'N/A'}`);
+            console.log(`📦 DEPENDENCIES: ${Object.keys(packageJson?.dependencies || {}).join(', ') || 'NONE'}`);
+            console.log(`📦 DEV DEPENDENCIES: ${Object.keys(packageJson?.devDependencies || {}).slice(0, 5).join(', ')}${Object.keys(packageJson?.devDependencies || {}).length > 5 ? '...' : ''}`);
+            console.log(`📁 TOTAL FILES: ${Object.keys(filesMap).length}`);
+            console.log(`📁 HAS WORKER DIR: ${Object.keys(filesMap).some(f => f.startsWith('worker/'))}`);
+            console.log(`📁 HAS ADMIN-APP DIR: ${Object.keys(filesMap).some(f => f.startsWith('admin-app/'))}`);
+            console.log(`📁 HAS API-WORKER DIR: ${Object.keys(filesMap).some(f => f.startsWith('api-worker/'))}`);
+            console.log(`${'='.repeat(60)}\n`);
 
             return {
                 success: true,

@@ -170,10 +170,20 @@ export async function enforceAuthRequirement(c: Context<AppEnv>) : Promise<Respo
     }
     
     const params = c.req.param();
+    logger.debug('Auth check params', { 
+        path: c.req.path,
+        params: Object.keys(params),
+        paramValues: params
+    });
     const env = c.env;
     const result = await routeAuthChecks(user, env, requirement, params);
     if (!result.success) {
-        logger.warn('Authentication check failed', result.response, requirement, user);
+        logger.warn('Authentication check failed', { 
+            path: c.req.path,
+            params,
+            userId: user?.id,
+            requirement: requirement.level
+        });
         return result.response;
     }
 }
@@ -228,12 +238,35 @@ function createForbiddenResponse(message: string): Response {
 export async function checkAppOwnership(user: AuthUser, params: Record<string, string>, env: Env): Promise<boolean> {
     try {
         const agentId = params.agentId || params.id;
+        logger.debug('Checking app ownership', { 
+            agentId, 
+            userId: user.id, 
+            params: Object.keys(params),
+            hasAgentId: !!params.agentId,
+            hasId: !!params.id
+        });
+        
         if (!agentId) {
+            logger.warn('No agentId found in params', { params });
             return false;
         }
 
         const appService = new AppService(env);
         const ownershipResult = await appService.checkAppOwnership(agentId, user.id);
+        
+        logger.debug('Ownership check result', {
+            agentId,
+            userId: user.id,
+            exists: ownershipResult.exists,
+            isOwner: ownershipResult.isOwner
+        });
+        
+        if (!ownershipResult.exists) {
+            logger.warn('App not found', { agentId, userId: user.id });
+        } else if (!ownershipResult.isOwner) {
+            logger.warn('User does not own app', { agentId, userId: user.id });
+        }
+        
         return ownershipResult.isOwner;
     } catch (error) {
         logger.error('Error checking app ownership', error);

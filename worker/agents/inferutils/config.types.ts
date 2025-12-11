@@ -28,14 +28,18 @@ export enum AIModels {
 	CLAUDE_3_7_SONNET_20250219 = 'anthropic/claude-3-7-sonnet-20250219',
 	CLAUDE_4_OPUS = 'anthropic/claude-opus-4-20250514',
 	CLAUDE_4_SONNET = 'anthropic/claude-sonnet-4-20250514',
+    CLAUDE_4_5_SONNET = 'anthropic/claude-sonnet-4-5',
+    CLAUDE_4_5_OPUS = 'anthropic/claude-opus-4-5',
 
 	OPENAI_O3 = 'openai/o3',
 	OPENAI_O4_MINI = 'openai/o4-mini',
 	OPENAI_CHATGPT_4O_LATEST = 'openai/chatgpt-4o-latest',
 	OPENAI_4_1 = 'openai/gpt-4.1-2025-04-14',
     OPENAI_5 = 'openai/gpt-5',
+    OPENAI_5_1 = 'openai/gpt-5.1',
     OPENAI_5_MINI = 'openai/gpt-5-mini',
     OPENAI_OSS = 'openai/gpt-oss-120b',
+    OPENAI_CODEX = 'openai/gpt-5.1-codex-max',
 
     // OPENROUTER_QWEN_3_CODER = '[openrouter]qwen/qwen3-coder',
     // OPENROUTER_KIMI_2_5 = '[openrouter]moonshotai/kimi-k2',

@@ -12,7 +12,9 @@ import { createInterface } from 'readline';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const PROJECT_ROOT = join(__dirname, '..');
-
+console.log('PROJECT_ROOT', PROJECT_ROOT);
+console.log('__dirname', __dirname);
+console.log('__filename', __filename);
 interface SetupConfig {
 	accountId: string;
 	apiToken: string;

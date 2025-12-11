@@ -56,16 +56,40 @@ export const PROMPT_UTILS = {
     serializeTemplate(template?: TemplateDetails): string {
         if (template) {
             // const indentedFilesText = filesText.replace(/^(?=.)/gm, '\t\t\t\t'); // Indent each line with 4 spaces
+            const isLiquidTemplate = template.name === 'base-store' || template.frameworks?.includes('liquid');
+            const liquidNote = isLiquidTemplate ? `
+**LIQUID TEMPLATE ARCHITECTURE:**
+This template uses Liquid templates (similar to Shopify) for the storefront and admin interfaces:
+- Storefront UI is in storefront-app/theme/ (layouts, templates, snippets, assets)
+- Admin UI is in admin-app/theme/ (layouts, templates, snippets, assets)
+- Liquid templates use variables passed from the API (store, products, product, etc.)
+- Custom Liquid filters are in theme/config/liquid-filters.js
+- JavaScript functionality (like CartAPI) is in theme/assets/
+- React components in src/ are for admin functionality only
+- Modify Liquid templates (.liquid files) to customize the UI, not React components for storefront
+- Use Liquid syntax: {{ variable }}, {% if %}, {% for %}, {% include 'snippet' %}
+- Assets are referenced with: {{ 'filename.css' | asset_url }}
+- Money formatting: {{ price | money: currency }}
+
+**When working with this template:**
+- For storefront changes: Edit Liquid files in storefront-app/theme/
+- For admin changes: Edit Liquid files in admin-app/theme/
+- For API changes: Edit api-worker/src/routes/
+- For React components: Edit src/components/admin/ (admin functionality only)
+` : '';
+            
+            const shadcnNote = !isLiquidTemplate ? `
+Apart from these files, All SHADCN Components are present in ./src/components/ui/* and can be imported from there, example: import { Button } from "@/components/ui/button";
+**Please do not rewrite these components, just import them and use them**
+` : '';
+            
             return `
 <TEMPLATE DETAILS>
 The following are the details (structures and files) of the starting boilerplate template, on which the project is based.
 
 Name: ${template.name}
 Frameworks: ${template.frameworks?.join(', ')}
-
-Apart from these files, All SHADCN Components are present in ./src/components/ui/* and can be imported from there, example: import { Button } from "@/components/ui/button";
-**Please do not rewrite these components, just import them and use them**
-
+${liquidNote}${shadcnNote}
 Template Usage Instructions: 
 ${template.description.usage}
 
@@ -1242,6 +1266,12 @@ export const STRATEGIES_UTILS = {
     **Make sure the primary (home) page is rendered correctly and as expected after each phase**
     **Make sure to overwrite the home page file**`,
     CONSTRAINTS: `<PHASE GENERATION CONSTRAINTS>
+        **SCOPE CONSTRAINT - CRITICAL:**
+        - ONLY implement features that the user explicitly requested. Do NOT add extra features beyond what was asked.
+        - If user just asks to "create a store" without specific features: style the template beautifully, add relevant sample products, ensure basic ecommerce works. STOP THERE.
+        - Do NOT add blogs, wishlists, reviews, loyalty programs, analytics, or other features unless explicitly requested.
+        - When in doubt about whether to add something, DON'T add it.
+        
         **Focus on building the frontend and all the views/pages in the initial 1-2 phases with core functionality and mostly mock data, then fleshing out the application**    
         **Before writing any components of your own, make sure to check the existing components and files in the template, try to use them if possible (for example preinstalled shadcn components)**
         **If auth functionality is required, provide mock auth functionality primarily. Provide real auth functionality ONLY IF template has persistence layer. Remember to seed the persistence layer with mock data AND Always PREFILL the UI with mock credentials. No oauth needed**
@@ -1285,10 +1315,10 @@ export const STRATEGIES = {
 
     ${STRATEGIES_UTILS.CONSTRAINTS}
 
-    **No need to add accessibility features. Focus on delivering an actually feature-wise polished and complete application in as few phases as possible.**
+    **No need to add accessibility features. Focus on delivering the features the user actually requested.**
     **Always stick to existing project/template patterns. Respect and work with existing worker bindings rather than making custom ones**
     **Rely on open source tools and free tier services only apart from whats configured in the environment. Refer to template usage instructions to know if specific cloudflare services are also available for use.**
-    **Make sure to implement all the features and functionality requested by the user and more. The application should be fully complete by the end of the last phase. There should be no compromises**
+    **SCOPE CONSTRAINT: Only implement features and functionality that the user explicitly requested. Do NOT add extra features beyond what was asked. If the user just asks for a store, style it beautifully and add sample products - nothing more.**
     **This is a Cloudflare Workers & Durable Objects project. The environment is preconfigured. Absolutely DO NOT Propose changes to wrangler.toml or any other config files. These config files are hidden from you but they do exist.**
     **The Homepage of the frontend is a dummy page. It should be rewritten as the primary page of the application in the initial phase.**
     **Refrain from editing any of the 'dont touch' files in the project, e.g - package.json, vite.config.ts, wrangler.jsonc, etc.**
@@ -1306,7 +1336,7 @@ FRONTEND_FIRST_CODING: `<PHASES GENERATION STRATEGY>
 
     ${STRATEGIES_UTILS.CODING_GUIDELINES}
 
-    **Make sure to implement all the features and functionality requested by the user and more. The application should be fully complete by the end of the last phase. There should be no compromises**
+    **SCOPE CONSTRAINT: Only implement features that the user explicitly requested. Do NOT add extra features. For simple store requests, focus on beautiful styling and sample products only.**
 </PHASES GENERATION STRATEGY>`, 
 }
 

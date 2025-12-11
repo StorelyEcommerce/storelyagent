@@ -19,6 +19,24 @@ interface GenerateSetupCommandsArgs {
 
 const SYSTEM_PROMPT = `You are an Expert DevOps Engineer at Cloudflare specializing in project setup and dependency management. Your task is to analyze project requirements and generate precise installation commands for missing dependencies.`
 
+// Packages that are already in the template and should NEVER be suggested
+const TEMPLATE_CORE_PACKAGES = [
+    '@cloudflare/vite-plugin',
+    '@cloudflare/workers-types',
+    'vite',
+    'wrangler',
+    'react',
+    'react-dom',
+    'react-router-dom',
+    'hono',
+    'stripe',
+    'lucide-react',
+    'tailwindcss',
+    'typescript',
+    'postcss',
+    'autoprefixer',
+];
+
 const SETUP_USER_PROMPT = `## TASK
 Analyze the blueprint and generate exact \`bun add\` commands for missing dependencies. Only suggest packages that are NOT already in the starting template.
 
@@ -58,6 +76,7 @@ Output:
 - Skip dependencies already in starting template
 - Include common companion packages when needed
 - Focus on blueprint requirements only
+- NEVER suggest these packages (they are already in the template): @cloudflare/vite-plugin, @cloudflare/workers-types, vite, wrangler, react, react-dom, react-router-dom, hono, stripe, lucide-react, tailwindcss, typescript, postcss, autoprefixer
 
 ${PROMPT_UTILS.COMMANDS}
 
@@ -130,7 +149,19 @@ ${error}`);
             this.logger.info(`Generated setup commands: ${results.string}`);
 
             this.save([createAssistantMessage(results.string)]);
-            return { commands: extractCommands(results.string) };
+            
+            // Extract and filter commands to remove any that install template core packages
+            const rawCommands = extractCommands(results.string);
+            const filteredCommands = rawCommands.filter(cmd => {
+                // Check if command tries to install any core package
+                return !TEMPLATE_CORE_PACKAGES.some(pkg => cmd.includes(pkg));
+            });
+            
+            if (filteredCommands.length !== rawCommands.length) {
+                this.logger.info(`Filtered out ${rawCommands.length - filteredCommands.length} commands that tried to install core template packages`);
+            }
+            
+            return { commands: filteredCommands };
         } catch (error) {
             this.logger.error("Error generating setup commands:", error);
             throw error;

@@ -154,8 +154,15 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                 break;
             }
             case 'agent_connected': {
-                const { state, templateDetails } = message;
-                console.log('Agent connected', state, templateDetails);
+                const { state, templateDetails, previewURL } = message;
+                console.log('Agent connected', state, templateDetails, previewURL);
+                
+                // Set preview URL if provided (e.g., from cached state)
+                if (previewURL) {
+                    const finalPreviewURL = getPreviewUrl(previewURL, message.tunnelURL);
+                    setPreviewUrl(finalPreviewURL);
+                    logger.debug('📺 Preview URL set from agent_connected:', finalPreviewURL);
+                }
                 
                 if (!isInitialStateRestored) {
                     logger.debug('📥 Performing initial state restoration');

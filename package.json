@@ -4,7 +4,7 @@
 	"version": "1.1.0",
 	"type": "module",
 	"scripts": {
-		"setup": "tsx scripts/setup.ts",
+		"setup": "bun scripts/setup.ts",
 		"prepare": "husky",
 		"dev": "DEV_MODE=true vite",
 		"build": "tsc -b --incremental && vite build",

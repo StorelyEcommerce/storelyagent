@@ -64,7 +64,7 @@ export async function getTemplateForQuery(
     if (!templatesResponse || !templatesResponse.success) {
         throw new Error(`Failed to fetch templates from sandbox service, ${templatesResponse.error}`);
     }
-        
+
     const analyzeQueryResponse = await selectTemplate({
         env,
         inferenceContext,
