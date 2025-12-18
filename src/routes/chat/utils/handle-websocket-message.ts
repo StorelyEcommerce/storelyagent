@@ -552,7 +552,7 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
             }
 
             case 'deployment_failed': {
-                toast.error(message.error);
+                toast.error('Deployment failed. Please try again.');
                 break;
             }
 
@@ -778,13 +778,13 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
 
             case 'cloudflare_deployment_error': {
                 setIsDeploying(false);
-                setDeploymentError(message.error || 'Unknown deployment error');
+                setDeploymentError('Deployment failed');
                 setCloudflareDeploymentUrl('');
                 setIsRedeployReady(true);
 
-                sendMessage(createAIMessage('cloudflare_deployment_error', `❌ Deployment failed: ${message.error}\n\n🔄 You can try deploying again.`));
+                sendMessage(createAIMessage('cloudflare_deployment_error', `❌ Deployment failed. Please try again.`));
 
-                toast.error(`Error: ${message.error}`);
+                toast.error('Deployment failed. Please try again.');
 
                 onDebugMessage?.('error',
                     'Deployment Failed - State Reset',
@@ -810,9 +810,9 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
             }
 
             case 'github_export_error': {
-                sendMessage(createAIMessage('github_export_error', `❌ GitHub export failed: ${message.error}`));
+                sendMessage(createAIMessage('github_export_error', `❌ GitHub export failed. Please try again.`));
 
-                toast.error(`Error: ${message.error}`);
+                toast.error('GitHub export failed. Please try again.');
 
                 break;
             }
@@ -901,7 +901,7 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                 const errorData = message;
                 setMessages(prev => [
                     ...prev,
-                    createAIMessage(`error_${Date.now()}`, `❌ ${errorData.error}`)
+                    createAIMessage(`error_${Date.now()}`, `❌ Something went wrong. Please try again.`)
                 ]);
 
                 onDebugMessage?.(

@@ -3,7 +3,7 @@ import type { StructuredLogger } from '../../../logger';
 import { TemplateDetails } from '../../../services/sandbox/sandboxTypes';
 import { applyUnifiedDiff } from '../../output-formats/diff-formats';
 import { FileState } from 'worker/agents/core/state';
-import { getTemplateFiles, getTemplateImportantFiles, isBackendReadOnlyFile } from 'worker/services/sandbox/utils';
+import { getTemplateFiles, getTemplateImportantFiles } from 'worker/services/sandbox/utils';
 
 /**
  * File processing utilities
@@ -15,7 +15,7 @@ export class FileProcessing {
      */
     static cleanFileContents(fileContents: string): string {
         let cleanedContents = fileContents;
-        
+
         if (fileContents.startsWith('```')) {
             // Ignore the first line if it starts with ```
             cleanedContents = fileContents.split('\n').slice(1).join('\n');
@@ -39,19 +39,19 @@ export class FileProcessing {
         logger?: Pick<StructuredLogger, 'info' | 'warn' | 'error'>
     ): string {
         const cleanedContents = FileProcessing.cleanFileContents(generatedFile.fileContents);
-        
+
         // File contents can either be raw or in unified diff format
         if (generatedFile.format === 'unified_diff') {
             logger?.info(`Applying unified diff to file: ${generatedFile.filePath}`);
-            
+
             if (originalContents) {
                 logger?.info(`Valid file contents found for ${generatedFile.filePath}, applying diff`);
             } else {
                 logger?.warn(`No valid file contents found for ${generatedFile.filePath}, but diff was generated`);
             }
-            
+
             logger?.info(`Diff for ${generatedFile.filePath}: `, cleanedContents);
-            
+
             try {
                 return applyUnifiedDiff(originalContents, cleanedContents);
             } catch (error) {
@@ -59,7 +59,7 @@ export class FileProcessing {
                 return originalContents;
             }
         }
-        
+
         logger?.info(`Setting file contents to cleaned contents ${generatedFile.filePath}`);
         return cleanedContents;
     }
@@ -68,7 +68,7 @@ export class FileProcessing {
      * Find file purpose from phase or generated files
      */
     static findFilePurpose(
-        filePath: string, 
+        filePath: string,
         phase: PhaseConceptType,
         generatedFilesMap: Record<string, FileOutputType>
     ): string {
@@ -77,13 +77,13 @@ export class FileProcessing {
         if (phaseFile?.purpose) {
             return phaseFile.purpose;
         }
-        
+
         // Then search in previously generated files
         const generatedFile = generatedFilesMap[filePath];
         if (generatedFile) {
             return generatedFile.filePurpose;
         }
-        
+
         return "";
     }
 
@@ -105,15 +105,15 @@ export class FileProcessing {
     ): FileState[] {
         // Include all template files (including backend/admin) so agent can read them
         const templateFiles = templateDetails?.allFiles ? (onlyImportantFiles ? getTemplateImportantFiles(templateDetails, true, false) : getTemplateFiles(templateDetails, false)) : [];
-        
+
         // Filter out template files that have been overridden by generated files
         const nonOverriddenTemplateFiles = templateFiles.filter(
             file => !generatedFilesMap[file.filePath]
         );
-        
+
         // Include all generated files (agent can read backend files, but can't write to them)
         const allGeneratedFiles = Object.values(generatedFilesMap);
-        
+
         return [
             ...nonOverriddenTemplateFiles.map(file => ({
                 ...file,

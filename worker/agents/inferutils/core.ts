@@ -200,7 +200,7 @@ function convertMessagesToResponsesInput(messages: Message[]): Array<{
         .filter(msg => msg.role === 'user' || msg.role === 'assistant')
         .map(msg => {
             let textContent = '';
-            
+
             if (typeof msg.content === 'string') {
                 textContent = msg.content;
             } else if (Array.isArray(msg.content)) {
@@ -211,7 +211,7 @@ function convertMessagesToResponsesInput(messages: Message[]): Array<{
                     .join('\n');
                 textContent = textParts;
             }
-            
+
             return {
                 role: msg.role as 'user' | 'assistant',
                 content: [{ type: 'text' as const, text: textContent }],
@@ -221,10 +221,10 @@ function convertMessagesToResponsesInput(messages: Message[]): Array<{
 
 export async function buildGatewayUrl(env: Env, providerOverride?: AIGatewayProviders): Promise<string> {
     // If CLOUDFLARE_AI_GATEWAY_URL is set and is a valid URL, use it directly
-    if (env.CLOUDFLARE_AI_GATEWAY_URL && 
-        env.CLOUDFLARE_AI_GATEWAY_URL !== 'none' && 
+    if (env.CLOUDFLARE_AI_GATEWAY_URL &&
+        env.CLOUDFLARE_AI_GATEWAY_URL !== 'none' &&
         env.CLOUDFLARE_AI_GATEWAY_URL.trim() !== '') {
-        
+
         try {
             const url = new URL(env.CLOUDFLARE_AI_GATEWAY_URL);
             // Validate it's actually an HTTP/HTTPS URL
@@ -239,7 +239,7 @@ export async function buildGatewayUrl(env: Env, providerOverride?: AIGatewayProv
             console.warn(`Invalid CLOUDFLARE_AI_GATEWAY_URL provided: ${env.CLOUDFLARE_AI_GATEWAY_URL}. Falling back to AI bindings.`);
         }
     }
-    
+
     // Build the url via bindings
     const gateway = env.AI.gateway(env.CLOUDFLARE_AI_GATEWAY);
     const baseUrl = providerOverride ? await gateway.getUrl(providerOverride) : `${await gateway.getUrl()}compat`;
@@ -277,7 +277,7 @@ async function getApiKey(provider: string, env: Env, _userId: string): Promise<s
     const providerKeyString = provider.toUpperCase().replaceAll('-', '_');
     const envKey = `${providerKeyString}_API_KEY` as keyof Env;
     let apiKey: string = env[envKey] as string;
-    
+
     // Check if apiKey is empty or undefined and is valid
     if (!isValidApiKey(apiKey)) {
         apiKey = env.CLOUDFLARE_AI_GATEWAY_TOKEN;
@@ -286,8 +286,8 @@ async function getApiKey(provider: string, env: Env, _userId: string): Promise<s
 }
 
 export async function getConfigurationForModel(
-    model: AIModels | string, 
-    env: Env, 
+    model: AIModels | string,
+    env: Env,
     userId: string,
 ): Promise<{
     baseURL: string,
@@ -339,7 +339,7 @@ export async function getConfigurationForModel(
 type InferArgsBase = {
     env: Env;
     metadata: InferenceMetadata;
-    actionKey: AgentActionKey  | 'testModelConfig';
+    actionKey: AgentActionKey | 'testModelConfig';
     messages: Message[];
     maxTokens?: number;
     modelName: AIModels | string;
@@ -375,12 +375,12 @@ export function serializeCallChain(context: ToolCallContext, finalResponse: stri
     let transcript = '**Request terminated by user, partial response transcript (last 5 messages):**\n\n<call_chain_transcript>';
     for (const message of context.messages.slice(-5)) {
         let content = message.content;
-        
+
         // Truncate tool messages to 100 chars
         if (message.role === 'tool' || message.role === 'function') {
             content = (content || '').slice(0, 100);
         }
-        
+
         transcript += `<message role="${message.role}">${content}</message>`;
     }
     transcript += `<final_response>${finalResponse || '**cancelled**'}</final_response>`;
@@ -465,7 +465,7 @@ async function executeToolCalls(openAiToolCalls: ChatCompletionMessageFunctionTo
                     name: tc.function.name,
                     arguments: {},
                     result: { error: `Failed to execute ${tc.function.name}: ${error instanceof Error ? error.message : 'Unknown error'}` }
-            };
+                };
             }
         })
     );
@@ -521,7 +521,7 @@ async function executeAnthropicToolCalls(
     isError: boolean;
 }[]> {
     const toolDefinitions = new Map(originalDefinitions.map(td => [td.function.name, td]));
-    
+
     return Promise.all(
         toolUseBlocks.map(async (toolUse) => {
             try {
@@ -529,24 +529,24 @@ async function executeAnthropicToolCalls(
                 if (!td) {
                     throw new Error(`Tool ${toolUse.name} not found`);
                 }
-                
+
                 // Anthropic already parses the input, no need to JSON.parse
                 const args = toolUse.input as Record<string, unknown>;
-                
+
                 // Call onStart callback if defined
                 if (td.onStart) {
                     td.onStart(args);
                 }
-                
+
                 const result = await td.implementation(args);
-                
+
                 // Call onComplete callback if defined
                 if (td.onComplete) {
                     td.onComplete(args, result);
                 }
-                
+
                 console.log(`[AnthropicToolCall] Executed ${toolUse.name}:`, result);
-                
+
                 return {
                     id: toolUse.id,
                     name: toolUse.name,
@@ -592,7 +592,7 @@ function convertToAnthropicMessages(messages: Message[]): {
 } {
     let systemPrompt: string | undefined;
     const anthropicMessages: Anthropic.MessageParam[] = [];
-    
+
     for (const msg of messages) {
         if (msg.role === 'system') {
             // Anthropic handles system messages separately
@@ -607,10 +607,10 @@ function convertToAnthropicMessages(messages: Message[]): {
             }
             continue;
         }
-        
+
         // Convert content to Anthropic format
         let content: Anthropic.ContentBlockParam[] | string;
-        
+
         if (typeof msg.content === 'string') {
             content = msg.content;
         } else if (Array.isArray(msg.content)) {
@@ -649,11 +649,11 @@ function convertToAnthropicMessages(messages: Message[]): {
         } else {
             content = '';
         }
-        
+
         const role = msg.role === 'assistant' ? 'assistant' : 'user';
         anthropicMessages.push({ role, content });
     }
-    
+
     // Anthropic requires alternating user/assistant messages
     // Merge consecutive messages of the same role
     const mergedMessages: Anthropic.MessageParam[] = [];
@@ -667,8 +667,8 @@ function convertToAnthropicMessages(messages: Message[]): {
                 prev.content = `${prev.content}\n\n${msg.content}`;
             } else {
                 // Convert to array and merge
-                const prevContent = typeof prev.content === 'string' 
-                    ? [{ type: 'text' as const, text: prev.content }] 
+                const prevContent = typeof prev.content === 'string'
+                    ? [{ type: 'text' as const, text: prev.content }]
                     : prev.content;
                 const msgContent = typeof msg.content === 'string'
                     ? [{ type: 'text' as const, text: msg.content }]
@@ -677,7 +677,7 @@ function convertToAnthropicMessages(messages: Message[]): {
             }
         }
     }
-    
+
     return { system: systemPrompt, messages: mergedMessages };
 }
 
@@ -717,31 +717,34 @@ async function inferWithAnthropicNative<OutputSchema extends z.AnyZodObject>({
     actionKey: AgentActionKey | 'testModelConfig';
     toolCallContext?: ToolCallContext;
 }): Promise<InferResponseObject<OutputSchema> | InferResponseString> {
+    // Mark metadata as used (reserved for future logging/telemetry)
+    void metadata;
+
     const apiKey = env.ANTHROPIC_API_KEY;
     if (!apiKey) {
         throw new Error('ANTHROPIC_API_KEY is required for Claude native API');
     }
-    
+
     const client = new Anthropic({ apiKey });
     const claudeModelName = extractClaudeModelName(modelName);
-    
+
     // Convert messages to Anthropic format
     const { system, messages: anthropicMessages } = convertToAnthropicMessages(messages);
-    
+
     // Convert tools to Anthropic format with strict: true
     const anthropicTools = tools ? convertToolsToAnthropicFormat(tools) : undefined;
-    
+
     // Build JSON Schema from Zod schema for structured output
     const outputFormat = schema ? {
         type: 'json_schema' as const,
         schema: zodToJsonSchema(schema),
     } : undefined;
-    
+
     const hasTools = anthropicTools && anthropicTools.length > 0;
-    
+
     console.log(`[ClaudeNative] Using native Anthropic API`);
     console.log(`[ClaudeNative] Model: ${claudeModelName}, Schema: ${schemaName || 'none'}, Tools: ${hasTools ? anthropicTools.length : 0}`);
-    
+
     // Track conversation for tool calling loop
     // Use BetaMessageParam type for compatibility with beta API features
     let currentMessages: Anthropic.Beta.BetaMessageParam[] = anthropicMessages.map(msg => ({
@@ -750,15 +753,15 @@ async function inferWithAnthropicNative<OutputSchema extends z.AnyZodObject>({
     }));
     const currentDepth = toolCallContext?.depth ?? 0;
     const maxDepth = getMaxToolCallingDepth(actionKey);
-    
+
     try {
         // Tool calling loop - continue until we get a final response or hit max depth
         let iterationCount = 0;
         const maxIterations = maxDepth - currentDepth;
-        
+
         while (iterationCount < maxIterations) {
             iterationCount++;
-            
+
             // Build the API request
             const requestParams: Anthropic.Beta.MessageCreateParams = {
                 model: claudeModelName,
@@ -767,29 +770,29 @@ async function inferWithAnthropicNative<OutputSchema extends z.AnyZodObject>({
                 messages: currentMessages,
                 betas: ['structured-outputs-2025-11-13'],
             };
-            
+
             // Add system prompt if present
             if (system) {
                 requestParams.system = system;
             }
-            
+
             // Add tools if present
             if (hasTools) {
                 requestParams.tools = anthropicTools;
             }
-            
+
             // Add output format for structured output (only if no tools or on final response)
             // Note: When tools are present, we let Claude use tools first, then format final response
             if (outputFormat && !hasTools) {
                 requestParams.output_format = outputFormat;
             }
-            
+
             console.log(`[ClaudeNative] Making API call (iteration ${iterationCount}/${maxIterations})`);
-            
+
             // Use streaming to avoid 10-minute timeout limitation
             // See: https://github.com/anthropics/anthropic-sdk-typescript#long-requests
             const messageStream = client.beta.messages.stream(requestParams);
-            
+
             // If stream callback provided, forward text chunks
             if (stream) {
                 let streamBuffer = '';
@@ -801,39 +804,39 @@ async function inferWithAnthropicNative<OutputSchema extends z.AnyZodObject>({
                     }
                 });
             }
-            
+
             const response = await messageStream.finalMessage();
-            
+
             console.log(`[ClaudeNative] Response received, stop_reason: ${response.stop_reason}`);
-            
+
             // Check for refusal
             if (response.stop_reason === 'refusal') {
                 throw new Error('Claude refused to generate response for safety reasons');
             }
-            
+
             // Check for max_tokens cutoff
             if (response.stop_reason === 'max_tokens') {
                 console.warn('[ClaudeNative] Response was cut off due to max_tokens limit');
             }
-            
+
             // Extract tool use blocks
             const toolUseBlocks = response.content.filter(
                 (block): block is Anthropic.Beta.BetaToolUseBlock => block.type === 'tool_use'
             );
-            
+
             // Extract text content
             const textBlocks = response.content.filter(
                 (block): block is Anthropic.Beta.BetaTextBlock => block.type === 'text'
             );
             const textContent = textBlocks.map(block => block.text).join('');
-            
+
             // If there are tool calls, execute them and continue the loop
             if (toolUseBlocks.length > 0 && tools) {
                 console.log(`[ClaudeNative] Executing ${toolUseBlocks.length} tool calls`);
-                
+
                 const toolResults = await executeAnthropicToolCalls(toolUseBlocks, tools);
                 const toolResultBlocks = formatToolResultsForAnthropic(toolResults);
-                
+
                 // Add assistant response with tool_use blocks to conversation
                 // Convert response content to BetaContentBlockParam format
                 const assistantContent: Anthropic.Beta.BetaContentBlockParam[] = response.content.map(block => {
@@ -850,40 +853,40 @@ async function inferWithAnthropicNative<OutputSchema extends z.AnyZodObject>({
                     // Fallback for other types
                     return { type: 'text' as const, text: JSON.stringify(block) };
                 });
-                
+
                 currentMessages.push({
                     role: 'assistant',
                     content: assistantContent,
                 });
-                
+
                 // Add user message with tool results
                 currentMessages.push({
                     role: 'user',
                     content: toolResultBlocks as Anthropic.Beta.BetaContentBlockParam[],
                 });
-                
+
                 // Check if any tools returned meaningful results
                 const hasResults = toolResults.some(tr => tr.result && !tr.isError);
                 if (!hasResults) {
                     console.log('[ClaudeNative] No tool results, continuing...');
                 }
-                
+
                 // Continue the loop to get the next response
                 continue;
             }
-            
+
             // No tool calls - this is the final response
             if (stream) {
                 stream.onChunk(textContent);
             }
-            
+
             // If we have a schema, parse and validate the response
             if (schema && schemaName) {
                 // If tools were used, we need to make one more call with output_format
                 // to get properly structured output
                 if (hasTools && textContent) {
                     console.log(`[ClaudeNative] Making final structured output call`);
-                    
+
                     // Add the final response to messages and ask for structured output
                     currentMessages.push({
                         role: 'assistant',
@@ -893,7 +896,7 @@ async function inferWithAnthropicNative<OutputSchema extends z.AnyZodObject>({
                         role: 'user',
                         content: 'Please provide your response in the required JSON format.',
                     });
-                    
+
                     // Use streaming for final structured output call
                     const structuredStream = client.beta.messages.stream({
                         model: claudeModelName,
@@ -905,15 +908,15 @@ async function inferWithAnthropicNative<OutputSchema extends z.AnyZodObject>({
                         output_format: outputFormat,
                     });
                     const structuredResponse = await structuredStream.finalMessage();
-                    
+
                     const finalTextContent = structuredResponse.content
                         .filter((block): block is Anthropic.Beta.BetaTextBlock => block.type === 'text')
                         .map(block => block.text)
                         .join('');
-                    
+
                     const parsedContent = JSON.parse(finalTextContent);
                     const result = schema.safeParse(parsedContent);
-                    
+
                     if (!result.success) {
                         console.error('[ClaudeNative] Schema validation failed:', result.error.format());
                         throw new InferError(
@@ -921,16 +924,16 @@ async function inferWithAnthropicNative<OutputSchema extends z.AnyZodObject>({
                             finalTextContent
                         );
                     }
-                    
+
                     console.log(`[ClaudeNative] Successfully validated structured response`);
                     return { object: result.data, toolCallContext };
                 }
-                
+
                 // Direct structured output (no tools were called)
                 try {
                     const parsedContent = JSON.parse(textContent);
                     const result = schema.safeParse(parsedContent);
-                    
+
                     if (!result.success) {
                         console.error('[ClaudeNative] Schema validation failed:', result.error.format());
                         throw new InferError(
@@ -938,7 +941,7 @@ async function inferWithAnthropicNative<OutputSchema extends z.AnyZodObject>({
                             textContent
                         );
                     }
-                    
+
                     console.log(`[ClaudeNative] Successfully validated response against schema`);
                     return { object: result.data, toolCallContext };
                 } catch (parseError) {
@@ -947,23 +950,23 @@ async function inferWithAnthropicNative<OutputSchema extends z.AnyZodObject>({
                     throw new InferError('Failed to parse structured response', textContent);
                 }
             }
-            
+
             // No schema - return as string
             console.log(`[ClaudeNative] Returning string response`);
             return { string: textContent, toolCallContext };
         }
-        
+
         // Max iterations reached
         console.warn(`[ClaudeNative] Max tool calling depth reached (${maxIterations})`);
         throw new AbortError(`Maximum tool calling depth (${maxDepth}) exceeded`, toolCallContext);
-        
+
     } catch (error) {
         if (error instanceof Anthropic.APIError) {
             console.error(`[ClaudeNative] Anthropic API error:`, {
                 status: error.status,
                 message: error.message,
             });
-            
+
             // Handle specific error cases
             if (error.status === 400) {
                 throw new Error(`Anthropic API error: ${error.message}`);
@@ -1021,7 +1024,7 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
     if (messages.length > MAX_LLM_MESSAGES) {
         throw new RateLimitExceededError(`Message limit exceeded: ${messages.length} messages (max: ${MAX_LLM_MESSAGES}). Please use context compactification.`, RateLimitType.LLM_CALLS);
     }
-    
+
     // Check tool calling depth to prevent infinite recursion
     const currentDepth = toolCallContext?.depth ?? 0;
     if (currentDepth >= getMaxToolCallingDepth(actionKey)) {
@@ -1030,12 +1033,12 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
         if (schema) {
             throw new AbortError(`Maximum tool calling depth (${getMaxToolCallingDepth(actionKey)}) exceeded. Tools may be calling each other recursively.`, toolCallContext);
         }
-        return { 
+        return {
             string: `[System: Maximum tool calling depth reached.]`,
-            toolCallContext 
+            toolCallContext
         };
     }
-    
+
     try {
         const userConfig = await getUserConfigurableSettings(env, metadata.userId)
         // Maybe in the future can expand using config object for other stuff like global model configs?
@@ -1045,17 +1048,17 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
         // - Structured output with guaranteed schema compliance via constrained decoding
         // - Tool calling with strict: true for guaranteed input schema compliance
         // Only skip when using custom format (which uses prompt-based schema)
-        const useNativeAnthropicAPI = 
-            isClaudeModel(modelName) && 
+        const useNativeAnthropicAPI =
+            isClaudeModel(modelName) &&
             !format && // Custom format uses prompt-based approach
             env.ANTHROPIC_API_KEY &&
             (schema || tools); // Either structured output or tool calling
-        
+
         if (useNativeAnthropicAPI) {
             const hasTools = tools && tools.length > 0;
             const hasSchema = schema && schemaName;
             console.log(`[ModelCall] Routing Claude model to native Anthropic API (schema: ${hasSchema}, tools: ${hasTools})`);
-            
+
             try {
                 const result = await inferWithAnthropicNative<OutputSchema>({
                     env,
@@ -1075,7 +1078,7 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
             } catch (anthropicError) {
                 // If Anthropic native API fails (e.g., schema incompatibility), 
                 // fall back to OpenAI SDK approach
-                console.warn(`[ModelCall] Anthropic native API failed, falling back to OpenAI SDK:`, 
+                console.warn(`[ModelCall] Anthropic native API failed, falling back to OpenAI SDK:`,
                     anthropicError instanceof Error ? anthropicError.message : String(anthropicError));
                 // Continue to OpenAI SDK approach below
             }
@@ -1098,15 +1101,15 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
         // AI Gateway's /compat endpoint doesn't support Anthropic-specific extra_body parameters
         const isDirectAnthropicCall = baseURL.includes('api.anthropic.com');
         const extraBody = modelName.includes('claude') && isDirectAnthropicCall ? {
-                    extra_body: {
-                        thinking: {
-                            type: 'enabled',
-                            budget_tokens: claude_thinking_budget_tokens[reasoning_effort ?? 'medium'],
-                        },
-                    },
-                }
+            extra_body: {
+                thinking: {
+                    type: 'enabled',
+                    budget_tokens: claude_thinking_budget_tokens[reasoning_effort ?? 'medium'],
+                },
+            },
+        }
             : {};
-        
+
         if (modelName.includes('claude')) {
             console.log(`[ClaudeCall] DirectCall: ${isDirectAnthropicCall}, ThinkingEnabled: ${!!extraBody.extra_body}, BaseURL: ${baseURL}`);
         }
@@ -1211,7 +1214,7 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
                     console.log('Inference cancelled by user');
                     throw new AbortError('**User cancelled inference**', toolCallContext);
                 }
-                
+
                 // Enhanced error logging for model call failures
                 const errorInfo = {
                     model: modelName,
@@ -1224,7 +1227,7 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
                     errorCode: (error as any)?.code || 'N/A',
                 };
                 console.error(`[ModelCallError] Failed to call ${modelName}:`, JSON.stringify(errorInfo, null, 2));
-                
+
                 if ((error instanceof Error && error.message.includes('429')) || (typeof error === 'string' && error.includes('429'))) {
                     throw new RateLimitExceededError('Rate limit exceeded in LLM calls, Please try again later', RateLimitType.LLM_CALLS);
                 }
@@ -1237,7 +1240,7 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
                 // Use responses API for Codex models
                 // Convert messages to responses API input format
                 const responsesInput = convertMessagesToResponsesInput(messagesToPass);
-                
+
                 // Responses API supports tools and schema similar to chat completions
                 const responsesParams: any = {
                     model: modelName,
@@ -1245,23 +1248,23 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
                     max_completion_tokens: maxTokens || 150000,
                     temperature: finalTemperature,
                 };
-                
+
                 // Add tools if provided
                 if (tools) {
                     responsesParams.tools = tools;
                     responsesParams.tool_choice = 'auto';
                 }
-                
+
                 // Add response format (schema) if provided
                 if (schemaObj.response_format) {
                     responsesParams.response_format = schemaObj.response_format;
                 }
-                
+
                 // Only add stream if explicitly requested (responses API handles this differently)
                 if (stream) {
                     responsesParams.stream = true;
                 }
-                
+
                 response = await client.responses.create(responsesParams, {
                     signal: abortSignal,
                     headers: {
@@ -1280,7 +1283,7 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
                     console.log('Inference cancelled by user');
                     throw new AbortError('**User cancelled inference**', toolCallContext);
                 }
-                
+
                 console.error(`Failed to get inference response from OpenAI responses API: ${error}`);
                 if ((error instanceof Error && error.message.includes('429')) || (typeof error === 'string' && error.includes('429'))) {
                     throw new RateLimitExceededError('Rate limit exceeded in LLM calls, Please try again later', RateLimitType.LLM_CALLS);
@@ -1295,19 +1298,19 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
             // If streaming is enabled, handle the stream response
             if (response instanceof Stream) {
                 let streamIndex = 0;
-                
+
                 if (isResponsesAPI) {
                     // Handle responses API streaming format
                     // Accumulators for tool calls: by index (preferred) and by id (fallback when index is missing)
                     const byIndex = new Map<number, ToolAccumulatorEntry>();
                     const byId = new Map<string, ToolAccumulatorEntry>();
                     const orderCounterRef = { value: 0 };
-                    
+
                     for await (const event of response as Stream<any>) {
                         // Responses API streaming events have a different structure
                         // Extract content and tool calls from the event
                         const eventData = event as any;
-                        
+
                         // Handle content delta
                         if (eventData.delta?.content) {
                             const deltaContent = eventData.delta.content;
@@ -1331,7 +1334,7 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
                                 }
                             }
                         }
-                        
+
                         // Handle tool calls delta (responses API format)
                         if (eventData.delta?.tool_calls) {
                             try {
@@ -1352,7 +1355,7 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
                                 console.error('Error processing tool calls in responses API streaming:', error);
                             }
                         }
-                        
+
                         // Check for finish reason
                         if (eventData.done || eventData.finish_reason) {
                             const finalSlice = content.slice(streamIndex);
@@ -1362,7 +1365,7 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
                             break;
                         }
                     }
-                    
+
                     // Assemble toolCalls from responses API stream
                     const assembled = assembleToolCalls(byIndex, byId);
                     const dropped = assembled.filter(tc => !tc.function.name || tc.function.name.trim() === '');
@@ -1370,7 +1373,7 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
                         console.warn(`[TOOL_CALL_WARNING] Dropping ${dropped.length} streamed tool_call(s) without function name from responses API`, dropped);
                     }
                     toolCalls = assembled.filter(tc => tc.function.name && tc.function.name.trim() !== '');
-                    
+
                     // Validate accumulated tool calls
                     for (const toolCall of toolCalls) {
                         if (!toolCall.function.name) {
@@ -1395,16 +1398,16 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
                     const byIndex = new Map<number, ToolAccumulatorEntry>();
                     const byId = new Map<string, ToolAccumulatorEntry>();
                     const orderCounterRef = { value: 0 };
-                    
+
                     for await (const event of response as Stream<OpenAI.ChatCompletionChunk>) {
                         const delta = (event as ChatCompletionChunk).choices[0]?.delta;
-                        
+
                         // Provider-specific logging
                         const provider = modelName.split('/')[0];
                         if (delta?.tool_calls && (provider === 'google-ai-studio' || provider === 'gemini')) {
                             console.log(`[PROVIDER_DEBUG] ${provider} tool_calls delta:`, JSON.stringify(delta.tool_calls, null, 2));
                         }
-                        
+
                         if (delta?.tool_calls) {
                             try {
                                 for (const deltaToolCall of delta.tool_calls as ToolCallsArray) {
@@ -1414,7 +1417,7 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
                                 console.error('Error processing tool calls in streaming:', error);
                             }
                         }
-                        
+
                         // Process content
                         content += delta?.content || '';
                         const slice = content.slice(streamIndex);
@@ -1424,7 +1427,7 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
                             streamIndex += slice.length;
                         }
                     }
-                    
+
                     // Assemble toolCalls with preference for index ordering, else first-seen order
                     const assembled = assembleToolCalls(byIndex, byId);
                     const dropped = assembled.filter(tc => !tc.function.name || tc.function.name.trim() === '');
@@ -1432,7 +1435,7 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
                         console.warn(`[TOOL_CALL_WARNING] Dropping ${dropped.length} streamed tool_call(s) without function name`, dropped);
                     }
                     toolCalls = assembled.filter(tc => tc.function.name && tc.function.name.trim() !== '');
-                    
+
                     // Validate accumulated tool calls (do not mutate arguments)
                     for (const toolCall of toolCalls) {
                         if (!toolCall.function.name) {
@@ -1459,7 +1462,7 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
                 console.error('Expected a stream response but received a non-stream object.');
                 if (isResponsesAPI) {
                     // Handle responses API non-stream response
-                    const resp = response as unknown as { 
+                    const resp = response as unknown as {
                         output?: Array<{ type: string; text?: string; tool_calls?: any[] }>;
                         tool_calls?: any[];
                     };
@@ -1469,14 +1472,14 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
                             .filter((item: any) => item.type === 'text')
                             .map((item: any) => item.text || '')
                             .join('\n');
-                        
+
                         // Extract tool calls from output array or top-level
                         const toolCallsFromOutput = resp.output
                             .filter((item: any) => item.tool_calls && Array.isArray(item.tool_calls))
                             .flatMap((item: any) => item.tool_calls);
-                        
+
                         const allToolCallsRaw = toolCallsFromOutput.length > 0 ? toolCallsFromOutput : (resp.tool_calls || []);
-                        
+
                         // Convert responses API tool call format to chat completions format
                         toolCalls = allToolCallsRaw
                             .map((tc: any) => ({
@@ -1484,8 +1487,8 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
                                 type: 'function' as const,
                                 function: {
                                     name: tc.function?.name || tc.name || '',
-                                    arguments: typeof tc.function?.arguments === 'string' 
-                                        ? tc.function.arguments 
+                                    arguments: typeof tc.function?.arguments === 'string'
+                                        ? tc.function.arguments
                                         : JSON.stringify(tc.function?.arguments || tc.arguments || {}),
                                 },
                             }))
@@ -1505,7 +1508,7 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
             // If not streaming, get the full response content
             if (isResponsesAPI) {
                 // Handle responses API non-stream response
-                const resp = response as unknown as { 
+                const resp = response as unknown as {
                     output?: Array<{ type: string; text?: string; tool_calls?: any[] }>;
                     tool_calls?: any[];
                     usage?: { total_tokens?: number };
@@ -1516,14 +1519,14 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
                         .filter((item: any) => item.type === 'text')
                         .map((item: any) => item.text || '')
                         .join('\n');
-                    
+
                     // Extract tool calls from output array or top-level
                     const toolCallsFromOutput = resp.output
                         .filter((item: any) => item.tool_calls && Array.isArray(item.tool_calls))
                         .flatMap((item: any) => item.tool_calls);
-                    
+
                     const allToolCallsRaw = toolCallsFromOutput.length > 0 ? toolCallsFromOutput : (resp.tool_calls || []);
-                    
+
                     // Convert responses API tool call format to chat completions format
                     const allToolCalls = allToolCallsRaw
                         .map((tc: any) => ({
@@ -1531,13 +1534,13 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
                             type: 'function' as const,
                             function: {
                                 name: tc.function?.name || tc.name || '',
-                                arguments: typeof tc.function?.arguments === 'string' 
-                                    ? tc.function.arguments 
+                                arguments: typeof tc.function?.arguments === 'string'
+                                    ? tc.function.arguments
                                     : JSON.stringify(tc.function?.arguments || tc.arguments || {}),
                             },
                         }))
                         .filter((tc: ChatCompletionMessageFunctionToolCall) => tc.function.name && tc.function.name.trim() !== '');
-                    
+
                     const droppedNonStream = allToolCalls.filter(tc => !tc.function.name || tc.function.name.trim() === '');
                     if (droppedNonStream.length) {
                         console.warn(`[TOOL_CALL_WARNING] Dropping ${droppedNonStream.length} non-stream tool_call(s) without function name from responses API`, droppedNonStream);
@@ -1598,10 +1601,10 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
                 messages: newMessages,
                 depth: newDepth
             };
-            
+
             const executedCallsWithResults = executedToolCalls.filter(result => result.result);
             console.log(`${actionKey}: Tool calling depth: ${newDepth}/${getMaxToolCallingDepth(actionKey)}`);
-            
+
             if (executedCallsWithResults.length) {
                 if (schema && schemaName) {
                     const output = await infer<OutputSchema>({

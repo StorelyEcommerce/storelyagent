@@ -709,7 +709,7 @@ export class SandboxSdkClient extends BaseSandboxService {
                                 } else {
                                     this.logger.warn('⚠️ [START_DEV_SERVER] Failed to write modified package.json', {
                                         instanceId,
-                                        error: writeResult.error
+                                        error: 'Write operation failed'
                                     });
                                 }
                             }

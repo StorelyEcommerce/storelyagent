@@ -143,7 +143,7 @@ export abstract class BaseSandboxService {
                 console.log(`📋 USING CACHED TEMPLATE: ${templateName}`);
                 console.log(`${'='.repeat(60)}`);
                 console.log(`📦 CACHED NAME: ${cachedPackageJson?.name || 'N/A'}`);
-                console.log(`📦 CACHED DEV SCRIPT: ${cachedPackageJson?.scripts?.dev || 'N/A'}`);
+                console.log(`📦 CACHED DEV SCRIPT: ${(cachedPackageJson as any)?.scripts?.dev || 'N/A'}`);
                 console.log(`📁 CACHED FILES COUNT: ${Object.keys(cached.allFiles || {}).length}`);
                 console.log(`📁 HAS WORKER DIR: ${Object.keys(cached.allFiles || {}).some(f => f.startsWith('worker/'))}`);
                 console.log(`📁 HAS ADMIN-APP DIR: ${Object.keys(cached.allFiles || {}).some(f => f.startsWith('admin-app/'))}`);

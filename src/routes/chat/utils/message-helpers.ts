@@ -34,7 +34,7 @@ export function isConversationalMessage(messageId: string): boolean {
         'generation-complete',
         'core_app_complete',
     ];
-    
+
     return conversationalIds.includes(messageId) || messageId.startsWith('conv-');
 }
 
@@ -79,14 +79,12 @@ export function handleRateLimitError(
         rawMessage?: unknown
     ) => void
 ): ChatMessage {
-    let displayMessage = rateLimitError.message;
-    
-    if (rateLimitError.suggestions && rateLimitError.suggestions.length > 0) {
-        displayMessage += `\n\n💡 Suggestions:\n${rateLimitError.suggestions.map(s => `• ${s}`).join('\n')}`;
-    }
-    
-    toast.error(displayMessage);
-    
+    // Show generic message to user
+    const genericMessage = 'You\'ve reached a usage limit. Please wait a bit and try again.';
+
+    toast.error(genericMessage);
+
+    // Log detailed info for debugging (not shown to user)
     onDebugMessage?.(
         'error',
         `Rate Limit: ${rateLimitError.limitType.replace('_', ' ')} limit exceeded`,
@@ -95,10 +93,10 @@ export function handleRateLimitError(
         rateLimitError.limitType,
         rateLimitError
     );
-    
+
     return createAIMessage(
         `rate_limit_${Date.now()}`,
-        `⏱️ ${displayMessage}`
+        `⏱️ ${genericMessage}`
     );
 }
 
@@ -114,7 +112,7 @@ export function addOrUpdateMessage(
         const mainMessageIndex = messages.findIndex(m => m.conversationId === 'main' && m.ui?.isThinking);
         if (mainMessageIndex !== -1) {
             return messages.map((msg, index) =>
-                index === mainMessageIndex 
+                index === mainMessageIndex
                     ? { ...msg, ...newMessage }
                     : msg
             );
@@ -181,10 +179,10 @@ export function appendToolEvent(
 
     return messages.map((m, i) => {
         if (i !== idx) return m;
-        
+
         const current = m.ui?.toolEvents ?? [];
         const currentContentLength = m.content.length;
-        
+
         if (tool.status === 'start') {
             // Add new tool start event with current position
             return {
@@ -200,16 +198,16 @@ export function appendToolEvent(
                 }
             };
         }
-        
+
         if (tool.status === 'success') {
             // Find the matching 'start' event
             const startEventIndex = current.findIndex(ev => ev.name === tool.name && ev.status === 'start');
-            
+
             if (startEventIndex !== -1) {
                 const startEvent = current[startEventIndex];
                 const contentChanged = startEvent.contentLength !== currentContentLength;
                 const isDeepDebug = tool.name === 'deep_debug';
-                
+
                 // For deep_debug with content changes: add new success event at end (chronological)
                 // For other tools: update in place (avoid duplication)
                 if (isDeepDebug && contentChanged) {
@@ -231,7 +229,7 @@ export function appendToolEvent(
                         }
                     };
                 }
-                
+
                 // Update in place for other tools or when no content changed
                 return {
                     ...m,
@@ -239,19 +237,19 @@ export function appendToolEvent(
                         ...m.ui,
                         toolEvents: current.map((ev, j) =>
                             j === startEventIndex
-                                ? { 
-                                    name: ev.name, 
-                                    status: 'success' as const, 
+                                ? {
+                                    name: ev.name,
+                                    status: 'success' as const,
                                     timestamp: startEvent.timestamp, // Keep original timestamp for stable React key
                                     contentLength: ev.contentLength, // Keep original position
                                     result: tool.result // Add result if provided
-                                  }
+                                }
                                 : ev
                         )
                     }
                 };
             }
-            
+
             // No prior start found, just add success event with position
             return {
                 ...m,
@@ -267,7 +265,7 @@ export function appendToolEvent(
                 }
             };
         }
-        
+
         // Error status - add with position for inline rendering
         return {
             ...m,

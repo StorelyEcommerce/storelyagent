@@ -18,7 +18,7 @@ import { UserMessage, AIMessage } from './components/messages';
 import { PhaseTimeline } from './components/phase-timeline';
 import { PreviewIframe } from './components/preview-iframe';
 import { ViewModeSwitch } from './components/view-mode-switch';
-import { DebugPanel, type DebugMessage } from './components/debug-panel';
+import { type DebugMessage } from './components/debug-panel';
 import { useChat, type FileType } from './hooks/use-chat';
 import { type ModelConfigsData, type BlueprintType, SUPPORTED_IMAGE_MIME_TYPES } from '@/api-types';
 import { Copy } from './components/copy';
@@ -70,7 +70,7 @@ export default function Chat() {
 	// Manual refresh trigger for preview
 	const [manualRefreshTrigger, setManualRefreshTrigger] = useState(0);
 
-	// Debug message utilities
+	// Debug message utility - still needed for passing to useChat (logs to console only, no panel)
 	const addDebugMessage = useCallback(
 		(
 			type: DebugMessage['type'],
@@ -80,25 +80,13 @@ export default function Chat() {
 			messageType?: string,
 			rawMessage?: unknown,
 		) => {
-			const debugMessage: DebugMessage = {
-				id: `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
-				timestamp: Date.now(),
-				type,
-				message,
-				details,
-				source,
-				messageType,
-				rawMessage,
-			};
-
-			setDebugMessages((prev) => [...prev, debugMessage]);
+			// Debug messages are now only logged to console, not shown in UI
+			if (import.meta.env.DEV) {
+				console.debug('[Debug]', type, message, { details, source, messageType, rawMessage });
+			}
 		},
 		[],
 	);
-
-	const clearDebugMessages = useCallback(() => {
-		setDebugMessages([]);
-	}, []);
 
 	const {
 		messages,
@@ -153,8 +141,7 @@ export default function Chat() {
 	// Terminal state
 	// const [terminalLogs, setTerminalLogs] = useState<TerminalLog[]>([]);
 
-	// Debug panel state
-	const [debugMessages, setDebugMessages] = useState<DebugMessage[]>([]);
+	// Debug panel removed
 
 	const [isResetDialogOpen, setIsResetDialogOpen] = useState(false);
 	const [isGitCloneModalOpen, setIsGitCloneModalOpen] = useState(false);
@@ -1168,12 +1155,7 @@ export default function Chat() {
 				</AnimatePresence>
 			</div>
 
-			{/* Debug Panel */}
-			<DebugPanel
-				messages={debugMessages}
-				onClear={clearDebugMessages}
-				chatSessionId={chatId}
-			/>
+			{/* Debug Panel - Removed for production */}
 
 			<AlertDialog open={isResetDialogOpen} onOpenChange={setIsResetDialogOpen}>
 				<AlertDialogContent className="sm:max-w-[425px]">

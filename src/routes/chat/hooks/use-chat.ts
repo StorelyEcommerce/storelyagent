@@ -402,9 +402,8 @@ export function useChat({
 			try {
 				if (urlChatId === 'new') {
 					if (!userQuery) {
-						const errorMsg = 'Please enter a description of what you want to build';
 						logger.error('Query is required for new code generation');
-						toast.error(errorMsg);
+						toast.error('Please enter a description of what you want to build');
 						return;
 					}
 
