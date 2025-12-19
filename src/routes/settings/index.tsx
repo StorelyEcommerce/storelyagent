@@ -632,7 +632,6 @@ export default function SettingsPage() {
 							{/* <Separator /> */}
 
 
-						</div>
 
 						{/* Add Secret Dialog */}
 						<Dialog
@@ -1338,9 +1337,7 @@ export default function SettingsPage() {
 					</div>
 				</div>
 		</div>
-			</main >
-
-
-		</div >
+		</main >
+	</div >
 	);
 }
