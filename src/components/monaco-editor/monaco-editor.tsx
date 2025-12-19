@@ -197,14 +197,11 @@ export const MonacoEditor = memo<MonacoEditorProps>(function MonacoEditor({
 
 
 	useEffect(() => {
-		let configuredTheme = theme;
-		if (theme === 'system') {
-			configuredTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-		}
-		editor.current = monaco.editor.create(containerRef.current!, {
-			language: createOptions.language || 'typescript',
-			minimap: { enabled: false },
-			theme: configuredTheme === 'dark' ? 'vibesdk-dark' : 'vibesdk',
+		// Always use light theme
+			editor.current = monaco.editor.create(containerRef.current!, {
+				language: createOptions.language || 'typescript',
+				minimap: { enabled: false },
+				theme: 'vibesdk',
 			automaticLayout: true,
 			value: defaultCode,
 			fontSize: 13,
@@ -330,10 +327,10 @@ export const MonacoEditor = memo<MonacoEditorProps>(function MonacoEditor({
 		);
 	}, [find, replace]);
 
-	// Update theme when app theme changes
+	// Theme is always light
 	useEffect(() => {
 		if (editor.current) {
-			monaco.editor.setTheme(theme === 'dark' ? 'vibesdk-dark' : 'vibesdk');
+			monaco.editor.setTheme('vibesdk');
 		}
 	}, [theme]);
 
