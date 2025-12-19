@@ -66,9 +66,11 @@ export default function Home() {
 
 
 	const placeholderPhrases = useMemo(() => [
-		"todo list app",
-		"F1 fantasy game",
-		"personal finance tracker"
+		"video games",
+		"handmade jewelry",
+		"vintage clothing",
+		"coffee subscriptions",
+		"electronics"
 	], []);
 	const [currentPlaceholderPhraseIndex, setCurrentPlaceholderPhraseIndex] = useState(0);
 	const [currentPlaceholderText, setCurrentPlaceholderText] = useState("");
@@ -205,7 +207,7 @@ export default function Home() {
 							discoverReady ? "mt-48" : "mt-[20vh] sm:mt-[24vh] md:mt-[28vh]"
 						)}>
 							<h1 className="text-accent font-medium leading-[1.1] tracking-tight text-5xl w-full mb-4 bg-clip-text bg-gradient-to-r from-text-primary to-text-primary/90">
-								The fastest way to start selling online
+								Create your store
 							</h1>
 
 						<form
