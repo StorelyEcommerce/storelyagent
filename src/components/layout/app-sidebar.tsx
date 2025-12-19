@@ -11,6 +11,7 @@ import {
 	Bookmark,
 	// LayoutGrid,
 	Compass,
+	LayoutDashboard,
 } from 'lucide-react';
 import './sidebar-overrides.css';
 import { useRecentApps, useFavoriteApps, useApps } from '@/hooks/use-apps';
@@ -210,7 +211,7 @@ export function AppSidebar() {
 					{/* Build Button */}
 					<SidebarGroup>
 						<SidebarGroupContent>
-	
+
 							{location.pathname !== '/' && (
 								<div
 									className={cn(
@@ -285,7 +286,7 @@ export function AppSidebar() {
 															</div>
 														</SidebarMenuItem>
 													) : searchResults.length >
-													  0 ? (
+														0 ? (
 														<>
 															<SidebarMenuItem>
 																<div className="px-2 py-1 text-xs text-text-tertiary">
@@ -295,7 +296,7 @@ export function AppSidebar() {
 																	}{' '}
 																	app
 																	{searchResults.length !==
-																	1
+																		1
 																		? 's'
 																		: ''}
 																</div>
@@ -404,12 +405,12 @@ export function AppSidebar() {
 											className={cn(
 												'flex items-center gap-2 text-md text-text-primary',
 												isCollapsed &&
-													'justify-center px-0',
+												'justify-center px-0',
 											)}
 										>
 											{!isCollapsed && 'Bookmarked'}
 											<Bookmark className="h-5 w-5 fill-yellow-500 text-yellow-500" />
-											
+
 										</SidebarGroupLabel>
 										<SidebarGroupContent>
 											<SidebarMenu>
@@ -581,6 +582,21 @@ export function AppSidebar() {
 									{!isCollapsed && (
 										<span className="text-text-primary/80 font-medium group-hover:text-primary transition-colors">
 											Discover
+										</span>
+									)}
+								</SidebarMenuButton>
+							</SidebarMenuItem>
+							<SidebarMenuItem>
+								<SidebarMenuButton
+									id="admin-link"
+									onClick={() => navigate('/admin')}
+									tooltip="Store Admin"
+									className="group hover:opacity-80 hover:cursor-pointer hover:bg-bg-1/50 transition-all duration-200"
+								>
+									<LayoutDashboard className="h-6 w-6 text-text-primary/60 group-hover:text-primary/80 transition-colors" />
+									{!isCollapsed && (
+										<span className="text-text-primary/80 font-medium group-hover:text-primary transition-colors">
+											Store Admin
 										</span>
 									)}
 								</SidebarMenuButton>
