@@ -135,7 +135,7 @@
 			"custom_domain": true
 		},
 		{
-			"pattern": "*app.storelyshop.com/*",
+			"pattern": "*.app.storelyshop.com/*",
 			"custom_domain": false,
 			"zone_id": "8002c10cbe879ffc390b6d837f5d142e"
 		}
