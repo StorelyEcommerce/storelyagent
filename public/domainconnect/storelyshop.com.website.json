@@ -1,0 +1,23 @@
+{
+    "providerId": "storelyshop.com",
+    "providerName": "Storely",
+    "serviceId": "website",
+    "serviceName": "Storefront",
+    "version": 1,
+    "description": "Point your domain to a Storely-hosted storefront.",
+    "variableDescription": "%TARGET%: Storely deployment host",
+    "records": [
+        {
+            "type": "CNAME",
+            "host": "@",
+            "pointsTo": "%TARGET%",
+            "ttl": 3600
+        },
+        {
+            "type": "CNAME",
+            "host": "www",
+            "pointsTo": "%TARGET%",
+            "ttl": 3600
+        }
+    ]
+}
