@@ -5,6 +5,7 @@ import type {
 // import type { ScreenshotData } from './types';
 import type { ConversationMessage } from '../inferutils/common';
 import type { InferenceContext } from '../inferutils/config.types';
+import type { ImageAttachment, ProcessedImageAttachment } from 'worker/types/image-attachment';
 
 export interface FileState extends FileOutputType {
     lastDiff: string;
@@ -56,13 +57,16 @@ export interface CodeGenState {
     lastDeepDebugTranscript: string | null;
     isDeepDebugging?: boolean; // Track if debug session is active
     storeInfoPending?: boolean; // Track if waiting for store info before initialization
+    storeStylePending?: boolean; // Track if waiting for store style selection before initialization
+    storeStyleMessage?: string; // Message to broadcast when style selection is needed
+    storeStyleOptions?: ProcessedImageAttachment[]; // Generated style options for selection
     pendingInitArgs?: {
         query: string;
         language: string;
         frameworks: string[];
         hostname: string;
         inferenceContext: InferenceContext;
-        images?: any[];
+        images?: Array<ImageAttachment | ProcessedImageAttachment>;
         storeInfoMessage?: string; // Message to broadcast via WebSocket asking for store info
     }; // Stored init args when waiting for store info before initialization
 } 

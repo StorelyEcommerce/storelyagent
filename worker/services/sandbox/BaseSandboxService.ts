@@ -146,7 +146,6 @@ export abstract class BaseSandboxService {
                 console.log(`📦 CACHED DEV SCRIPT: ${(cachedPackageJson as any)?.scripts?.dev || 'N/A'}`);
                 console.log(`📁 CACHED FILES COUNT: ${Object.keys(cached.allFiles || {}).length}`);
                 console.log(`📁 HAS WORKER DIR: ${Object.keys(cached.allFiles || {}).some(f => f.startsWith('worker/'))}`);
-                console.log(`📁 HAS ADMIN-APP DIR: ${Object.keys(cached.allFiles || {}).some(f => f.startsWith('admin-app/'))}`);
                 console.log(`${'='.repeat(60)}\n`);
                 return {
                     success: true,
@@ -251,7 +250,6 @@ export abstract class BaseSandboxService {
             console.log(`📦 DEV DEPENDENCIES: ${Object.keys(packageJson?.devDependencies || {}).slice(0, 5).join(', ')}${Object.keys(packageJson?.devDependencies || {}).length > 5 ? '...' : ''}`);
             console.log(`📁 TOTAL FILES: ${Object.keys(filesMap).length}`);
             console.log(`📁 HAS WORKER DIR: ${Object.keys(filesMap).some(f => f.startsWith('worker/'))}`);
-            console.log(`📁 HAS ADMIN-APP DIR: ${Object.keys(filesMap).some(f => f.startsWith('admin-app/'))}`);
             console.log(`📁 HAS API-WORKER DIR: ${Object.keys(filesMap).some(f => f.startsWith('api-worker/'))}`);
             console.log(`${'='.repeat(60)}\n`);
 

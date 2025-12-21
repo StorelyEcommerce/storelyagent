@@ -6,7 +6,8 @@ import { InferenceContext } from '../inferutils/config.types';
 import { RateLimitExceededError, SecurityError } from 'shared/types/errors';
 import { TemplateSelection, TemplateSelectionSchema } from '../../agents/schemas';
 import { generateSecureToken } from 'worker/utils/cryptoUtils';
-import type { ImageAttachment } from '../../types/image-attachment';
+import type { ImageAttachment, ProcessedImageAttachment } from '../../types/image-attachment';
+import { imageToBase64 } from 'worker/utils/images';
 import { InferError } from '../inferutils/core';
 
 const logger = createLogger('TemplateSelector');
@@ -15,7 +16,7 @@ interface SelectTemplateArgs {
     query: string;
     availableTemplates: TemplateListResponse['templates'];
     inferenceContext: InferenceContext;
-    images?: ImageAttachment[];
+    images?: Array<ImageAttachment | ProcessedImageAttachment>;
 }
 
 /**
@@ -111,10 +112,22 @@ ${images && images.length > 0 ? `\n**Note:** User provided ${images.length} imag
 
 ENTROPY SEED: ${generateSecureToken(64)} - for unique results`;
 
-        const userMessage = images && images.length > 0
+        const imageUrls = images && images.length > 0
+            ? await Promise.all(images.map(async (image) => {
+                if ('publicUrl' in image) {
+                    if (image.base64Data) {
+                        return `data:${image.mimeType};base64,${image.base64Data}`;
+                    }
+                    return await imageToBase64(env, image);
+                }
+                return `data:${image.mimeType};base64,${image.base64Data}`;
+            }))
+            : [];
+
+        const userMessage = imageUrls.length > 0
             ? createMultiModalUserMessage(
                 userPrompt,
-                images.map(img => `data:${img.mimeType};base64,${img.base64Data}`),
+                imageUrls,
                 'high'
               )
             : createUserMessage(userPrompt);

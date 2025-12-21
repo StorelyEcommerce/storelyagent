@@ -329,6 +329,12 @@
 	@apply text-brand;
 }
 
+.a-tag img {
+	max-width: 100%;
+	border-radius: 12px;
+	border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
 .prose {
 	/* --tw-prose-invert-counters: rgb(156, 187, 192); */
 	/* --tw-prose-invert-bullets: rgb(156, 187, 192); */

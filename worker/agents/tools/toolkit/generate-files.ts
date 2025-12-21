@@ -35,9 +35,9 @@ Use this when:
 - Scaffolding new components/utilities
 
 CRITICAL RESTRICTIONS:
-- Cannot modify files in api-worker/, worker/, or admin-app/ directories (read-only, auto-deployed)
+- Cannot modify files in api-worker/ or worker/ directories (read-only, auto-deployed)
 - Only files in storefront-app/ can be modified
-- Backend and admin files are available for reading but cannot be written
+- Backend files are available for reading but cannot be written
 
 The system will:
 1. Automatically determine which files to create based on requirements
@@ -88,7 +88,7 @@ Provide detailed, specific requirements. The more detail, the better the results
 				if (readOnlyFiles.length > 0) {
 					const readOnlyPaths = readOnlyFiles.map(f => f.path).join(', ');
 					return {
-						error: `Cannot generate files in read-only directories: ${readOnlyPaths}. Backend (api-worker/), worker routes, and admin dashboard (admin-app/) are read-only and automatically deployed. Only files in storefront-app/ can be modified.`,
+						error: `Cannot generate files in read-only directories: ${readOnlyPaths}. Backend (api-worker/) and worker routes are read-only and automatically deployed. Only files in storefront-app/ can be modified.`,
 					};
 				}
 

@@ -101,7 +101,7 @@ export class FileManager implements IFileManager {
         // Filter out backend read-only files
         const frontendFiles = files.filter(file => {
             if (isBackendReadOnlyFile(file.filePath)) {
-                console.warn(`[FileManager] Attempted to save read-only file: ${file.filePath}. Backend (api-worker/), worker routes, and admin dashboard (admin-app/) are read-only and automatically deployed. Only files in storefront-app/ can be modified.`);
+                console.warn(`[FileManager] Attempted to save read-only file: ${file.filePath}. Backend (api-worker/) and worker routes are read-only and automatically deployed. Only files in storefront-app/ can be modified.`);
                 return false;
             }
             return true;

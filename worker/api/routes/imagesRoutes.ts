@@ -12,9 +12,9 @@ export function setupScreenshotRoutes(app: Hono<AppEnv>): void {
 
   app.route('/api/screenshots', screenshotsRouter);
 
-//   const imagesRouter = new Hono<AppEnv>();
-//   // Publicly serve image uploads
-//   imagesRouter.get('/:id/:file', setAuthLevel(AuthConfig.authenticated), adaptController(ScreenshotsController, ScreenshotsController.serveScreenshot));
+  const imagesRouter = new Hono<AppEnv>();
+  // Serve generated and uploaded images for authenticated users
+  imagesRouter.get('/:id/:file', setAuthLevel(AuthConfig.authenticated), adaptController(ScreenshotsController, ScreenshotsController.serveUpload));
 
-//   app.route('/api/uploads', imagesRouter);
+  app.route('/api/uploads', imagesRouter);
 }

@@ -61,7 +61,6 @@ export const PROMPT_UTILS = {
 **LIQUID TEMPLATE ARCHITECTURE:**
 This template uses LiquidJS for server-side templating (already installed - DO NOT add any liquid packages):
 - Storefront UI is in storefront-app/theme/ (layouts, templates, snippets, assets) - MODIFIABLE
-- Admin UI is in admin-app/theme/ (layouts, templates, snippets, assets) - READ-ONLY
 - LiquidJS is ALREADY in storefront-app/package.json - DO NOT install @shopify/liquid or any other liquid package
 - Liquid templates use variables passed from the API (store, products, product, etc.)
 - Custom Liquid filters are in theme/config/liquid-filters.js
@@ -71,17 +70,15 @@ This template uses LiquidJS for server-side templating (already installed - DO N
 - Assets are referenced with: {{ 'filename.css' | asset_url }}
 - Money formatting: {{ price | money: currency }}
 
-**CRITICAL - READ-ONLY BACKEND AND ADMIN:**
+**CRITICAL - READ-ONLY BACKEND:**
 - Backend API (api-worker/) and worker routes are READ-ONLY and AUTO-DEPLOYED
-- Admin dashboard (admin-app/) is READ-ONLY
-- Backend and admin are automatically deployed when store is created
-- Agent CANNOT modify any files in api-worker/, worker/, or admin-app/ directories
+- Agent CANNOT modify any files in api-worker/ or worker/ directories
 - Agent can ONLY modify frontend files in storefront-app/
 
 **When working with this template:**
 - For storefront changes: Edit Liquid files in storefront-app/theme/ (ONLY MODIFIABLE AREA)
 - Backend (api-worker/) is read-only - do not attempt to modify it
-- Admin dashboard (admin-app/) is read-only - do not attempt to modify it
+- Admin dashboard is managed separately and is not part of this template
 - Backend API endpoints are already available and working
 ` : '';
 
@@ -1308,6 +1305,8 @@ export const STRATEGIES_UTILS = {
             - **Price:** Realistic for the store type (e.g., $29.99)
             - **Image:** Set imageUrl to NULL (templates use CSS placeholders)
             - **Visible on Shop Page:** The /products page MUST display this product
+            - **No extra seed data:** Do NOT add any other sample products
+            - **No seeded users/admins:** Leave user/admin tables empty; the store creator is the only initial user/admin
         * **🎨 MINIMALIST VISUAL DESIGN FOUNDATION:** Establish clean, typography-focused visual foundation:
             - **Design System Excellence:** Define beautiful color palettes, typography scales, and generous whitespace
             - **Component Library Mastery:** Leverage shadcn components to create stunning, cohesive interfaces
@@ -1393,6 +1392,7 @@ export const STRATEGIES_UTILS = {
         **Focus on building the frontend and all the views/pages in the initial 1-2 phases with core functionality and mostly mock data, then fleshing out the application**    
         **Before writing any components of your own, make sure to check the existing components and files in the template, try to use them if possible (for example preinstalled shadcn components)**
         **If auth functionality is required, provide mock auth functionality primarily. Provide real auth functionality ONLY IF template has persistence layer. Remember to seed the persistence layer with mock data AND Always PREFILL the UI with mock credentials. No oauth needed**
+        **Seed data constraint:** Do NOT seed sample users or admins in seed.sql. Only the store creator should exist initially.
 
         **Applications with single view/page or mostly static content are considered **Simple Projects** and those with multiple views/pages are considered **Complex Projects** and should be designed accordingly.**
         * **Phase Count:** Aim for a maximum of 1 phase for simple applications and 3-7 phases for complex applications. Each phase should be self-contained. Do not exceed more than ${Math.floor(MAX_PHASES * 0.8)} phases unless addressing complex client requirements or feedbacks.

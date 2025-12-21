@@ -61,12 +61,12 @@ const SYSTEM_PROMPT = `<ROLE>
     - This ensures users can immediately see what their shop page looks like with real products
     - The shop page (/products) MUST display this sample product correctly
     
-    - **CRITICAL - BACKEND AND ADMIN ARE READ-ONLY:**
-      - Backend API (api-worker/), worker routes, and admin dashboard (admin-app/) are automatically deployed when store is created
-      - Agent CANNOT modify any files in api-worker/, worker/, or admin-app/ directories
+    - **CRITICAL - BACKEND IS READ-ONLY:**
+      - Backend API (api-worker/) and worker routes are automatically deployed when store is created
+      - Agent CANNOT modify any files in api-worker/ or worker/ directories
       - Backend API endpoints are already available and working - use them as-is
-      - Admin dashboard is available but read-only - do not plan changes to it
-      - DO NOT plan changes to backend or admin - they are read-only
+      - Admin dashboard is managed separately and is not part of this template
+      - DO NOT plan changes to backend - it is read-only
 
     **REMEMBER: This is not a toy or educational project. This is a serious ecommerce project which the client is either undertaking for building their own online store/business OR for testing out our capabilities and quality.**
 </TASK>

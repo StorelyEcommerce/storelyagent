@@ -990,7 +990,7 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
 
     /**
      * Determine which files to deploy
-     * Filters out backend read-only files (api-worker/, worker/, admin-app/)
+     * Filters out backend read-only files (api-worker/, worker/)
      */
     private getFilesToDeploy(
         requestedFiles: FileOutputType[],

@@ -89,11 +89,56 @@ export class ScreenshotsController extends BaseController {
 
 			// We return a naked Response because our controller helper types expect JSON, but this route is binary.
 			// It's safe because the router uses this Response directly.
-			return new Response(obj.body, {
-				headers,
-			}) as unknown as ControllerResponse<ApiResponse<never>>;
+            return new Response(obj.body, {
+                headers,
+            }) as unknown as ControllerResponse<ApiResponse<never>>;
 		        } catch (error) {
             this.logger.error('Error serving screenshot', { error });
+            return ScreenshotsController.createErrorResponse('Internal server error', 500);
+        }
+    }
+
+    static async serveUpload(
+        _request: Request,
+        env: Env,
+        _ctx: ExecutionContext,
+        context: RouteContext,
+    ): Promise<ControllerResponse<ApiResponse<never>>> {
+        try {
+            const sessionId = context.pathParams.id;
+            const file = context.pathParams.file;
+
+            if (!sessionId || !file) {
+                return ScreenshotsController.createErrorResponse('Missing path parameters', 400);
+            }
+
+            if (!isValidSessionId(sessionId)) {
+                return ScreenshotsController.createErrorResponse('Invalid session id', 400);
+            }
+
+            const validatedFile = validateFileName(file);
+            if (!validatedFile) {
+                return ScreenshotsController.createErrorResponse('Invalid file name', 400);
+            }
+
+            const key = `uploads/${sessionId}/${validatedFile}`;
+            const obj = await env.TEMPLATES_BUCKET.get(key);
+            if (!obj || !obj.body) {
+                return ScreenshotsController.createErrorResponse('Image not found', 404);
+            }
+
+            const contentType = obj.httpMetadata?.contentType || getMimeByExtension(validatedFile) || 'image/png';
+            const headers = new Headers({
+                'Content-Type': contentType,
+                'Cache-Control': 'public, max-age=31536000, immutable',
+                'X-Content-Type-Options': 'nosniff',
+            });
+
+            return new Response(obj.body, {
+                headers,
+            }) as unknown as ControllerResponse<ApiResponse<never>>;
+        } catch (error) {
+            this.logger.error('Error serving upload', { error });
             return ScreenshotsController.createErrorResponse('Internal server error', 500);
         }
     }

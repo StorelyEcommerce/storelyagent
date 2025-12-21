@@ -2,13 +2,12 @@ import { TemplateDetails, TemplateFile } from "./sandboxTypes";
 
 /**
  * Check if a file path is in a read-only backend directory
- * Backend, API server, and admin dashboard files are read-only and cannot be modified by the agent
+ * Backend and API server files are read-only and cannot be modified by the agent
  */
 export function isBackendReadOnlyFile(filePath: string): boolean {
-    // Files in api-worker/, worker/, and admin-app/ directories are read-only
+    // Files in api-worker/ and worker/ directories are read-only
     return filePath.startsWith('api-worker/') || 
-           filePath.startsWith('worker/') ||
-           filePath.startsWith('admin-app/'); // Admin dashboard is read-only
+           filePath.startsWith('worker/');
 }
 
 /**

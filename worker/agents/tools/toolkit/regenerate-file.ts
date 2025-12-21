@@ -24,9 +24,9 @@ export function createRegenerateFileTool(
 				`Autonomous AI agent that applies surgical fixes to code files. Takes file path and array of specific issues to fix. Returns diff showing changes made.
 
 CRITICAL RESTRICTIONS:
-- Cannot modify files in api-worker/, worker/, or admin-app/ directories (read-only, auto-deployed)
+- Cannot modify files in api-worker/ or worker/ directories (read-only, auto-deployed)
 - Only files in storefront-app/ can be modified
-- Backend and admin files are available for reading but cannot be written
+- Backend files are available for reading but cannot be written
 
 CRITICAL: Provide detailed, specific issues - not vague descriptions. See system prompt for full usage guide. These would be implemented by an independent LLM AI agent`,
 			parameters: {
@@ -43,7 +43,7 @@ CRITICAL: Provide detailed, specific issues - not vague descriptions. See system
 				// Validate that file is not in read-only directory
 				if (isBackendReadOnlyFile(path)) {
 					return {
-						error: `Cannot regenerate file in read-only directory: ${path}. Backend (api-worker/), worker routes, and admin dashboard (admin-app/) are read-only and automatically deployed. Only files in storefront-app/ can be modified.`,
+						error: `Cannot regenerate file in read-only directory: ${path}. Backend (api-worker/) and worker routes are read-only and automatically deployed. Only files in storefront-app/ can be modified.`,
 					};
 				}
 

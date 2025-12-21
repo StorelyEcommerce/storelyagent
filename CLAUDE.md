@@ -199,10 +199,7 @@ templates/templates/base-store/
 │   │   ├── assets/        # CSS, JS files
 │   │   └── config/        # Liquid filters
 │   └── package.json
-├── admin-app/             # Admin dashboard (Express + Liquid)
-│   ├── server.js
-│   ├── theme/
-│   └── package.json
+├── (admin dashboard)      # Separate app (not included in this template)
 ├── api-worker/            # Cloudflare Workers API (Hono)
 │   ├── src/
 │   │   ├── index.ts

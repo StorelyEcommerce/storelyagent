@@ -46,6 +46,7 @@ import { ImageAttachment, type ProcessedImageAttachment } from '../../types/imag
 import { OperationOptions } from '../operations/common';
 import { CodingAgentInterface } from '../services/implementations/CodingAgent';
 import { ImageType, uploadImage } from 'worker/utils/images';
+import { buildStoreStyleSelectionMessage, generateStoreStyleImages, parseStoreStyleSelection } from '../operations/store-style';
 import { ConversationMessage, ConversationState } from '../inferutils/common';
 import { DeepCodeDebugger } from '../assistants/codeDebugger';
 // import { DesignReviewAssistant, parseDesignReviewVerdict } from '../assistants/designReviewer';
@@ -423,6 +424,21 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
         }
     }
 
+    private async ensureProcessedImages(
+        images: Array<ImageAttachment | ProcessedImageAttachment> | undefined
+    ): Promise<ProcessedImageAttachment[]> {
+        if (!images || images.length === 0) {
+            return [];
+        }
+        const uploads = images.map(async (image) => {
+            if ('publicUrl' in image) {
+                return image as ProcessedImageAttachment;
+            }
+            return uploadImage(this.env, image as ImageAttachment, ImageType.UPLOADS);
+        });
+        return Promise.all(uploads);
+    }
+
     onStateUpdate(_state: CodeGenState, _source: "server" | Connection) { }
 
     setState(state: CodeGenState): void {
@@ -479,6 +495,19 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             // Broadcast as a normal conversational response
             sendToConnection(connection, WebSocketMessageResponses.CONVERSATION_RESPONSE, {
                 message: this.state.pendingInitArgs.storeInfoMessage,
+                conversationId,
+                isStreaming: false
+            });
+        }
+
+        if (this.state.storeStylePending && this.state.storeStyleMessage) {
+            this.logger().info('Broadcasting store style selection via WebSocket', {
+                storeStylePending: this.state.storeStylePending
+            });
+
+            const conversationId = IdGenerator.generateConversationId();
+            sendToConnection(connection, WebSocketMessageResponses.CONVERSATION_RESPONSE, {
+                message: this.state.storeStyleMessage,
                 conversationId,
                 isStreaming: false
             });
@@ -2850,8 +2879,100 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                     hasBlueprint: !!this.state.blueprint
                 });
 
+                if (this.state.storeStylePending) {
+                    const maxOptions = this.state.storeStyleOptions?.length ?? 0;
+                    const selectionIndex = parseStoreStyleSelection(userMessage, maxOptions);
+                    if (selectionIndex === null || !this.state.storeStyleOptions) {
+                        const retryMessage = maxOptions > 0
+                            ? `Please reply with 1, 2, or 3 to pick a style option.`
+                            : `I don't have any style options ready yet. Please try again in a moment.`;
+                        this.broadcast(WebSocketMessageResponses.CONVERSATION_RESPONSE, {
+                            message: retryMessage,
+                            conversationId: IdGenerator.generateConversationId(),
+                            isStreaming: false
+                        });
+                        return;
+                    }
+
+                    const selectedImage = this.state.storeStyleOptions[selectionIndex];
+                    const pendingImages = await this.ensureProcessedImages(pendingInitArgs.images);
+                    const combinedImages = [...pendingImages, selectedImage];
+                    const updatedQuery = `${pendingInitArgs.query}\n\nUser selected style option ${selectionIndex + 1} for visual inspiration.`;
+
+                    this.logger().info('Selecting template with complete query (including store style selection)');
+                    const { templateDetails, selection } = await getTemplateForQuery(
+                        this.env,
+                        this.state.inferenceContext,
+                        updatedQuery,
+                        combinedImages,
+                        this.logger()
+                    );
+
+                    await this.initialize({
+                        query: updatedQuery,
+                        language: pendingInitArgs.language,
+                        frameworks: pendingInitArgs.frameworks,
+                        hostname: pendingInitArgs.hostname,
+                        inferenceContext: pendingInitArgs.inferenceContext,
+                        images: combinedImages,
+                        templateInfo: { templateDetails, selection },
+                        onBlueprintChunk: () => { }
+                    }, this.state.agentMode);
+
+                    this.setState({
+                        ...this.state,
+                        pendingInitArgs: undefined,
+                        storeInfoPending: false,
+                        storeStylePending: false,
+                        storeStyleMessage: undefined,
+                        storeStyleOptions: undefined
+                    });
+
+                    this.logger().info('Agent initialized after store style selection', {
+                        templateName: templateDetails.name,
+                        hasBlueprint: !!this.state.blueprint && Object.keys(this.state.blueprint).length > 0,
+                        templateNameInState: this.state.templateName
+                    });
+
+                    this.logger().info('Starting code generation after store style selection');
+                    this.generateAllFiles().catch(error => {
+                        this.logger().error('Error starting generation after store style selection:', error);
+                    });
+                    return;
+                }
+
                 // Update query to include user's store info response
                 const updatedQuery = `${pendingInitArgs.query}\n\nUser provided additional information: ${userMessage}`;
+
+                try {
+                    const storeStyleImages = await generateStoreStyleImages({
+                        env: this.env,
+                        inferenceContext: pendingInitArgs.inferenceContext,
+                        storeInfo: updatedQuery
+                    });
+                    const storeStyleMessage = buildStoreStyleSelectionMessage(storeStyleImages);
+
+                    this.setState({
+                        ...this.state,
+                        pendingInitArgs: {
+                            ...pendingInitArgs,
+                            query: updatedQuery
+                        },
+                        storeInfoPending: false,
+                        storeStylePending: true,
+                        storeStyleMessage,
+                        storeStyleOptions: storeStyleImages
+                    });
+
+                    this.broadcast(WebSocketMessageResponses.CONVERSATION_RESPONSE, {
+                        message: storeStyleMessage,
+                        conversationId: IdGenerator.generateConversationId(),
+                        isStreaming: false
+                    });
+                    return;
+                } catch (error) {
+                    this.logger().error('Failed to generate store style images, continuing without style selection', error);
+                }
 
                 // NOW we select the template with the complete query (including store name/design)
                 // This is when we actually know what template to use
