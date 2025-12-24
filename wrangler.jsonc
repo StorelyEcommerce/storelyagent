@@ -142,7 +142,10 @@
 	],
 	"vars": {
 		"TEMPLATES_REPOSITORY": "https://github.com/StorelyEcommerce/store-template",
-		"ALLOWED_EMAIL": "jayyala@gmail.com",
+		"ALLOWED_EMAILS": [
+			"jayyala@gmail.com",
+			"jacques.attinger@gmail.com"
+		],
 		"DISPATCH_NAMESPACE": "vibesdk-default-namespace",
 		"ENABLE_READ_REPLICAS": "true",
 		"CLOUDFLARE_AI_GATEWAY": "vibesdk-gateway",

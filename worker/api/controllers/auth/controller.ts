@@ -59,12 +59,16 @@ export class AuthController extends BaseController {
 
             const validatedData = registerSchema.parse(bodyResult.data);
 
-            if (env.ALLOWED_EMAIL && validatedData.email !== env.ALLOWED_EMAIL) {
+            if (
+                Array.isArray(env.ALLOWED_EMAILS) &&
+                !env.ALLOWED_EMAILS.includes(validatedData.email)
+            ) {
                 return AuthController.createErrorResponse(
-                    'Email Whitelisting is enabled. Please use the allowed email to register.',
+                    'Email whitelisting is enabled. Please use an allowed email to log in.',
                     403
                 );
             }
+
 
             const authService = new AuthService(env);
             const result = await authService.register(validatedData, request);
