@@ -2942,7 +2942,9 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
                 }
 
                 // Update query to include user's store info response
-                const updatedQuery = `${pendingInitArgs.query}\n\nUser provided additional information: ${userMessage}`;
+                // Note: The user message contains the store name AND the desired visual design style
+                // (colors, fonts, overall aesthetic) for the website's appearance - NOT text content to add to the store
+                const updatedQuery = `${pendingInitArgs.query}\n\nUser provided store name and visual design style for the website's appearance (colors, fonts, layout aesthetic): ${userMessage}`;
 
                 try {
                     const storeStyleImages = await generateStoreStyleImages({

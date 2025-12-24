@@ -41,7 +41,7 @@ export interface ToolCallStatusArgs {
     result?: string;
 }
 
-export type RenderToolCall = ( args: ToolCallStatusArgs ) => void;
+export type RenderToolCall = (args: ToolCallStatusArgs) => void;
 
 type ConversationResponseCallback = (
     message: string,
@@ -300,7 +300,7 @@ export async function checkStoreInfoForInitialQuery(
     inferenceContext: InferenceContext
 ): Promise<StoreInfoCheck> {
     const logger = createLogger('StoreInfoCheck');
-    
+
     const checkPrompt = `Analyze the user's initial prompt to determine if they have provided:
 1. A store name (e.g., "My Store", "TechShop", "Fashion Boutique", "Artisan Crafts", etc.)
 2. Design preferences or style information (e.g., "modern", "minimalist", "vintage", "bold colors", color schemes, design style, aesthetic descriptions, etc.)
@@ -357,17 +357,17 @@ async function checkStoreInfoProvided(
     options: OperationOptions
 ): Promise<StoreInfoCheck | null> {
     const logger = createLogger('StoreInfoCheck');
-    
+
     // Only check for the VERY FIRST user message ever in the conversation
     // Check both runningHistory and fullHistory to ensure this is truly the first user message
     const runningHistoryUserCount = conversationState.runningHistory.filter(m => m.role === 'user').length;
     const fullHistoryUserCount = conversationState.fullHistory.filter(m => m.role === 'user').length;
-    
+
     // If there are any user messages in either history, this is not the first message
     if (runningHistoryUserCount > 0 || fullHistoryUserCount > 0) {
-        logger.info("Skipping store info check - not the first user message", { 
+        logger.info("Skipping store info check - not the first user message", {
             runningHistoryUserCount,
-            fullHistoryUserCount 
+            fullHistoryUserCount
         });
         return null; // Return null to indicate we should skip this check
     }
@@ -445,7 +445,7 @@ function buildUserMessageWithContext(userMessage: string, errors: RuntimeError[]
     }
 }
 
-async function prepareMessagesForInference(env: Env, messages: ConversationMessage[]) : Promise<ConversationMessage[]> {
+async function prepareMessagesForInference(env: Env, messages: ConversationMessage[]): Promise<ConversationMessage[]> {
     // For each multimodal image, convert the image to base64 data url
     const processedMessages = await Promise.all(messages.map(m => {
         return mapImagesInMultiModalMessage(structuredClone(m), async (c) => {
@@ -477,7 +477,7 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
     async execute(inputs: UserConversationInputs, options: OperationOptions): Promise<UserConversationOutputs> {
         const { env, logger, context, agent } = options;
         const { userMessage, conversationState, errors, images, projectUpdates } = inputs;
-        logger.info("Processing user message", { 
+        logger.info("Processing user message", {
             messageLength: inputs.userMessage.length,
             hasImages: !!images && images.length > 0,
             imageCount: images?.length || 0
@@ -496,13 +496,13 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
             // Otherwise, check what to ask for
             if (storeInfoCheck && storeInfoCheck.askFor !== 'skip') {
                 let askResponse = '';
-                
+
                 if (storeInfoCheck.askFor === 'both') {
                     askResponse = `Before we continue, I'd like to know a bit more about your store to make it perfect for you:
 
 1. **Store Name**: What would you like to name your store? (e.g., "TechShop", "Fashion Boutique", "Artisan Crafts")
 
-2. **Design Style**: What design aesthetic are you looking for? For example:
+2. **Visual Design Style**: What visual aesthetic would you like for your store's appearance? This determines the colors, fonts, and overall look of your website. For example:
    - Modern and minimalist
    - Vintage and rustic
    - Bold and colorful
@@ -516,7 +516,7 @@ You can provide both now, or we can refine them later. Just let me know what you
 
 What would you like to call it?`;
                 } else if (storeInfoCheck.askFor === 'design') {
-                    askResponse = `Before we continue, I'd like to know what design aesthetic you're looking for. For example:
+                    askResponse = `Before we continue, I'd like to know what visual aesthetic you'd like for your store's appearance. This determines the colors, fonts, and overall look of your website. For example:
    - Modern and minimalist
    - Vintage and rustic
    - Bold and colorful
@@ -524,11 +524,11 @@ What would you like to call it?`;
    - Playful and fun
    - Or describe your preferred color scheme and visual style
 
-What design style do you have in mind?`;
+What visual design style do you have in mind?`;
                 }
 
                 if (askResponse) {
-                    logger.info("Asking user for store info", { 
+                    logger.info("Asking user for store info", {
                         askFor: storeInfoCheck.askFor,
                         checkResult: storeInfoCheck
                     });
@@ -549,8 +549,8 @@ What design style do you have in mind?`;
                     const assistantResponse = createAssistantMessage(askResponse);
 
                     const messages = [
-                        {...userMessageForHistory, conversationId: IdGenerator.generateConversationId()},
-                        {...assistantResponse, conversationId: aiConversationId}
+                        { ...userMessageForHistory, conversationId: IdGenerator.generateConversationId() },
+                        { ...assistantResponse, conversationId: aiConversationId }
                     ];
 
                     return {
@@ -567,7 +567,7 @@ What design style do you have in mind?`;
             }
 
             const systemPromptMessages = getSystemPromptWithProjectContext(SYSTEM_PROMPT, context, CodeSerializerType.SIMPLE);
-            
+
             // Create user message with optional images for inference
             const userPromptForInference = buildUserMessageWithContext(userMessage, errors, projectUpdates, true);
             const userMessageForInference = images && images.length > 0
@@ -579,7 +579,7 @@ What design style do you have in mind?`;
                 : createUserMessage(userPromptForInference);
 
             let extractedUserResponse = "";
-            
+
             // Generate unique conversation ID for this turn
             const aiConversationId = IdGenerator.generateConversationId();
 
@@ -592,13 +592,13 @@ What design style do you have in mind?`;
                 agent,
                 logger,
                 toolCallRenderer,
-                (chunk: string) => inputs.conversationResponseCallback(chunk, aiConversationId, true)    
+                (chunk: string) => inputs.conversationResponseCallback(chunk, aiConversationId, true)
             )).map(td => ({
                 ...td,
                 onStart: (args: Record<string, unknown>) => toolCallRenderer({ name: td.function.name, status: 'start', args }),
-                onComplete: (args: Record<string, unknown>, result: unknown) => toolCallRenderer({ 
-                    name: td.function.name, 
-                    status: 'success', 
+                onComplete: (args: Record<string, unknown>, result: unknown) => toolCallRenderer({
+                    name: td.function.name,
+                    status: 'success',
                     args,
                     result: typeof result === 'string' ? result : JSON.stringify(result)
                 })
@@ -608,7 +608,7 @@ What design style do you have in mind?`;
 
             const compactHistory = await this.compactifyContext(runningHistory, env, options, toolCallRenderer, logger);
             if (compactHistory.length !== runningHistory.length) {
-                logger.info("Conversation history compactified", { 
+                logger.info("Conversation history compactified", {
                     fullHistoryLength: conversationState.fullHistory.length,
                     runningHistoryLength: conversationState.runningHistory.length,
                     compactifiedRunningHistoryLength: compactHistory.length,
@@ -616,18 +616,18 @@ What design style do you have in mind?`;
                 });
             }
 
-            const messagesForInference =  [...systemPromptMessages, ...compactHistory, {...userMessageForInference, conversationId: IdGenerator.generateConversationId()}];
+            const messagesForInference = [...systemPromptMessages, ...compactHistory, { ...userMessageForInference, conversationId: IdGenerator.generateConversationId() }];
 
 
-            logger.info("Executing inference for user message", { 
+            logger.info("Executing inference for user message", {
                 messageLength: userMessage.length,
                 aiConversationId,
                 tools,
             });
-            
+
             // Don't save the system prompts so that every time new initial prompts can be generated with latest project context
             // Use inference message (with images) for AI, but store text-only in history
-            let result : InferResponseString;
+            let result: InferResponseString;
             try {
                 result = await executeInference({
                     env: env,
@@ -652,7 +652,7 @@ What design style do you have in mind?`;
                     throw error;
                 }
             }
-            
+
             logger.info("Successfully processed user message", {
                 streamingSuccess: !!extractedUserResponse,
             });
@@ -661,7 +661,7 @@ What design style do you have in mind?`;
                 userResponse: extractedUserResponse
             };
 
-            
+
             // For conversation history, store only text (images are ephemeral and not persisted)
             // Use original userMessage for history (not the processed one with injected prompt)
             const userPromptForHistory = buildUserMessageWithContext(userMessage, errors, projectUpdates, false);
@@ -673,8 +673,8 @@ What design style do you have in mind?`;
                 )
                 : createUserMessage(userPromptForHistory);
 
-            
-            const messages = [{...userMessageForHistory, conversationId: IdGenerator.generateConversationId()}];
+
+            const messages = [{ ...userMessageForHistory, conversationId: IdGenerator.generateConversationId() }];
 
             // Save the assistant's response to conversation history
             // If tools were called, include the tool call messages from toolCallContext
@@ -684,15 +684,15 @@ What design style do you have in mind?`;
                         .map((message) => ({ ...message, conversationId: IdGenerator.generateConversationId() }))
                 );
             }
-            
+
             // Check if final response is duplicate of last assistant message in tool context
             const finalResponse = createAssistantMessage(result.string);
             const lastToolContextMessage = result.toolCallContext?.messages?.[result.toolCallContext.messages.length - 1];
-            const isDuplicate = lastToolContextMessage?.role === 'assistant' && 
-                               lastToolContextMessage?.content === finalResponse.content;
-            
+            const isDuplicate = lastToolContextMessage?.role === 'assistant' &&
+                lastToolContextMessage?.content === finalResponse.content;
+
             if (!isDuplicate) {
-                messages.push({...finalResponse, conversationId: IdGenerator.generateConversationId()});
+                messages.push({ ...finalResponse, conversationId: IdGenerator.generateConversationId() });
                 logger.info("Added final assistant response to history");
             } else {
                 logger.info("Skipped duplicate final assistant response");
@@ -723,13 +723,13 @@ What design style do you have in mind?`;
             logger.error("Error processing user message:", error);
             if (error instanceof RateLimitExceededError || error instanceof SecurityError) {
                 throw error;
-            }   
+            }
 
             const fallbackMessages = [
-                {...createUserMessage(userMessage), conversationId: IdGenerator.generateConversationId()},
-                {...createAssistantMessage(FALLBACK_USER_RESPONSE), conversationId: IdGenerator.generateConversationId()}
+                { ...createUserMessage(userMessage), conversationId: IdGenerator.generateConversationId() },
+                { ...createAssistantMessage(FALLBACK_USER_RESPONSE), conversationId: IdGenerator.generateConversationId() }
             ]
-            
+
             // Fallback response
             return {
                 conversationResponse: {
@@ -763,7 +763,7 @@ What design style do you have in mind?`;
      */
     private estimateTokens(messages: ConversationMessage[]): number {
         let totalChars = 0;
-        
+
         for (const msg of messages) {
             if (typeof msg.content === 'string') {
                 totalChars += msg.content.length;
@@ -778,7 +778,7 @@ What design style do you have in mind?`;
                     }
                 }
             }
-            
+
             // Account for tool calls
             if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
                 for (const tc of msg.tool_calls as ChatCompletionMessageFunctionToolCall[]) {
@@ -795,7 +795,7 @@ What design style do you have in mind?`;
                 }
             }
         }
-        
+
         return this.tokensFromChars(totalChars);
     }
 
@@ -812,15 +812,15 @@ What design style do you have in mind?`;
         const estimatedTokens = this.estimateTokens(messages);
 
         console.log(`[UserConversationProcessor] shouldCompactify: turns=${turns}, estimatedTokens=${estimatedTokens}`);
-        
+
         if (turns >= COMPACTIFICATION_CONFIG.MAX_TURNS) {
             return { should: true, reason: 'turns', turns, estimatedTokens };
         }
-        
+
         if (estimatedTokens >= COMPACTIFICATION_CONFIG.MAX_ESTIMATED_TOKENS) {
             return { should: true, reason: 'tokens', turns, estimatedTokens };
         }
-        
+
         return { should: false, turns, estimatedTokens };
     }
 
@@ -831,11 +831,11 @@ What design style do you have in mind?`;
     private findTurnBoundary(messages: ConversationMessage[], preserveCount: number): number {
         // Start from the point where we want to split
         const targetSplitIndex = messages.length - preserveCount;
-        
+
         if (targetSplitIndex <= 0) {
             return 0;
         }
-        
+
         // Walk backwards to find the nearest user message boundary
         for (let i = targetSplitIndex; i >= 0; i--) {
             if (messages[i].role === 'user') {
@@ -843,7 +843,7 @@ What design style do you have in mind?`;
                 return i;
             }
         }
-        
+
         // If no user message found, don't split
         return 0;
     }
@@ -888,7 +888,7 @@ Provide the summary now:`
             });
 
             const summary = summaryResult.string.trim();
-            
+
             logger.info('Generated conversation summary', {
                 summaryLength: summary.length,
                 summaryTokens: this.tokensFromChars(summary.length)
@@ -928,12 +928,12 @@ Provide the summary now:`
         try {
             // Check if compactification is needed on the running history
             const analysis = this.shouldCompactify(runningHistory);
-            
+
             if (!analysis.should) {
                 // No compactification needed
                 return runningHistory;
             }
-            
+
             logger.info('Compactification triggered', {
                 reason: analysis.reason,
                 turns: analysis.turns,
@@ -942,36 +942,36 @@ Provide the summary now:`
             });
 
             // Currently compactification would be done on the running history, but should we consider doing it on the full history?
-            
+
             // Find turn boundary for splitting
             const splitIndex = this.findTurnBoundary(
                 runningHistory,
                 COMPACTIFICATION_CONFIG.PRESERVE_RECENT_MESSAGES
             );
-            
+
             // Safety check: ensure we have something to compactify
             if (splitIndex <= 0) {
                 logger.warn('Cannot find valid turn boundary for compactification, preserving all messages');
                 return runningHistory;
             }
-            
+
             // Split messages
             const messagesToSummarize = runningHistory.slice(0, splitIndex);
             const recentMessages = runningHistory.slice(splitIndex);
-            
+
             logger.info('Compactification split determined', {
                 summarizeCount: messagesToSummarize.length,
                 preserveCount: recentMessages.length,
                 splitIndex
             });
-            
-            toolCallRenderer({ 
-                name: 'summarize_history', 
-                status: 'start', 
-                args: { 
+
+            toolCallRenderer({
+                name: 'summarize_history',
+                status: 'start',
+                args: {
                     messageCount: messagesToSummarize.length,
-                    recentCount: recentMessages.length 
-                } 
+                    recentCount: recentMessages.length
+                }
             });
 
             // Generate LLM-powered summary
@@ -985,25 +985,25 @@ Provide the summary now:`
             // Create summary message - its conversationId will be the archive ID
             const summarizedTurns = this.countTurns(messagesToSummarize);
             const archiveId = `archive-${Date.now()}-${IdGenerator.generateConversationId()}`;
-            
+
             const summaryMessage: ConversationMessage = {
                 role: 'assistant' as MessageRole,
                 content: `[Conversation History Summary: ${messagesToSummarize.length} messages, ${summarizedTurns} turns]\n[Archive ID: ${archiveId}]\n\n${summary}`,
                 conversationId: archiveId
             };
-            
-            toolCallRenderer({ 
-                name: 'summarize_history', 
-                status: 'success', 
-                args: { 
+
+            toolCallRenderer({
+                name: 'summarize_history',
+                status: 'success',
+                args: {
                     summary: summary.substring(0, 200) + '...',
-                    archiveId 
-                } 
+                    archiveId
+                }
             });
-            
+
             // Return summary + recent messages
             const compactifiedHistory = [summaryMessage, ...recentMessages];
-            
+
             logger.info('Compactification completed with archival', {
                 originalMessageCount: runningHistory.length,
                 newMessageCount: compactifiedHistory.length,
@@ -1012,12 +1012,12 @@ Provide the summary now:`
                 archivedMessageCount: messagesToSummarize.length,
                 archiveId
             });
-            
+
             return compactifiedHistory;
-            
+
         } catch (error) {
             logger.error('Compactification failed, preserving original messages', { error });
-            
+
             // Safe fallback: if we have too many messages, keep recent ones
             if (runningHistory.length > COMPACTIFICATION_CONFIG.PRESERVE_RECENT_MESSAGES * 3) {
                 const fallbackCount = COMPACTIFICATION_CONFIG.PRESERVE_RECENT_MESSAGES * 2;
@@ -1030,7 +1030,7 @@ Provide the summary now:`
     }
 
 
-    processProjectUpdates<T extends ProjectUpdateType>(updateType: T, _data: WebSocketMessageData<T>, logger: StructuredLogger) : ConversationMessage[] {
+    processProjectUpdates<T extends ProjectUpdateType>(updateType: T, _data: WebSocketMessageData<T>, logger: StructuredLogger): ConversationMessage[] {
         try {
             logger.info("Processing project update", { updateType });
 

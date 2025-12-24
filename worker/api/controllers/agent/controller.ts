@@ -382,11 +382,11 @@ export class CodingAgentController extends BaseController {
         let askMessage = '';
 
         if (storeInfoCheck.askFor === 'both') {
-            askMessage = `Before we continue, I'd like to know a bit more about your store to make it perfect for you:\n\n1. **Store Name**: What would you like to name your store? (e.g., "TechShop", "Fashion Boutique", "Artisan Crafts")\n\n2. **Design Style**: What design aesthetic are you looking for? For example:\n   - Modern and minimalist\n   - Vintage and rustic\n   - Bold and colorful\n   - Elegant and sophisticated\n   - Playful and fun\n   - Or describe your preferred color scheme and visual style`;
+            askMessage = `Before we continue, I'd like to know a bit more about your store to make it perfect for you:\n\n1. **Store Name**: What would you like to name your store? (e.g., "TechShop", "Fashion Boutique", "Artisan Crafts")\n\n2. **Visual Design Style**: What visual aesthetic would you like for your store's appearance? This determines the colors, fonts, and overall look of your website. For example:\n   - Modern and minimalist\n   - Vintage and rustic\n   - Bold and colorful\n   - Elegant and sophisticated\n   - Playful and fun\n   - Or describe your preferred color scheme and visual style`;
         } else if (storeInfoCheck.askFor === 'name') {
             askMessage = `Before we continue, I'd like to know what you'd like to name your store. (e.g., "TechShop", "Fashion Boutique", "Artisan Crafts")\n\nWhat would you like to call it?`;
         } else if (storeInfoCheck.askFor === 'design') {
-            askMessage = `Before we continue, I'd like to know what design aesthetic you're looking for. For example:\n   - Modern and minimalist\n   - Vintage and rustic\n   - Bold and colorful\n   - Elegant and sophisticated\n   - Playful and fun\n   - Or describe your preferred color scheme and visual style\n\nWhat design style do you have in mind?`;
+            askMessage = `Before we continue, I'd like to know what visual aesthetic you'd like for your store's appearance. This determines the colors, fonts, and overall look of your website. For example:\n   - Modern and minimalist\n   - Vintage and rustic\n   - Bold and colorful\n   - Elegant and sophisticated\n   - Playful and fun\n   - Or describe your preferred color scheme and visual style\n\nWhat visual design style do you have in mind?`;
         }
 
         logger.info("Store info needed, setting up pending state", {
