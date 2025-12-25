@@ -145,4 +145,11 @@ export const ConversationalResponseSchema = z.object({
 
 export type ConversationalResponseType = z.infer<typeof ConversationalResponseSchema>;
 
+export const GuardRailsOutputSchema = z.object({
+    isAllowed: z.boolean().describe('Whether the user request is allowed (strictly e-commerce related)'),
+    refusalReason: z.string().optional().describe('The reason for refusal if the request is not allowed, to be shown to the user'),
+});
+
+export type GuardRailsOutputType = z.infer<typeof GuardRailsOutputSchema>;
+
 
