@@ -72,7 +72,6 @@ export interface AgentConfig {
     fastCodeFixer: ModelConfig;
     conversationalResponse: ModelConfig;
     deepDebugger: ModelConfig;
-    guardrailCheck: ModelConfig;
 }
 
 // Provider and reasoning effort types for validation
