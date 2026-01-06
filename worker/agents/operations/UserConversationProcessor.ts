@@ -1,5 +1,4 @@
 import { ConversationalResponseType } from "../schemas";
-import { GuardRailsOperation } from './Guardrail';
 import { createAssistantMessage, createUserMessage, createMultiModalUserMessage, MessageRole, mapImagesInMultiModalMessage } from "../inferutils/common";
 import { executeInference } from "../inferutils/infer";
 import type { ChatCompletionMessageFunctionToolCall } from 'openai/resources';
@@ -483,25 +482,6 @@ export class UserConversationProcessor extends AgentOperation<UserConversationIn
             hasImages: !!images && images.length > 0,
             imageCount: images?.length || 0
         });
-
-        // --- GUARDRAIL CHECK ---
-        const guardrailOp = new GuardRailsOperation();
-        const guardResult = await guardrailOp.execute({ userInput: userMessage }, options);
-
-        if (!guardResult.isAllowed) {
-            logger.info("Guardrail blocked request", { reason: guardResult.refusalReason });
-
-            const refusalResponse = guardResult.refusalReason || "I can only assist with building and modifying e-commerce stores.";
-
-            // Return early with refusal
-            return {
-                conversationResponse: {
-                    userResponse: refusalResponse
-                },
-                conversationState: inputs.conversationState // No state change or minimal state change
-            };
-        }
-        // --- END GUARDRAIL CHECK ---
 
         try {
             // Check if store name and design are provided (only for the VERY FIRST user message)
