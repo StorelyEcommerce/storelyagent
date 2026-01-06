@@ -26,7 +26,7 @@ interface SetupConfig {
 	setupRemote?: boolean;
 	prodDomain?: string;
 	prodVars?: Record<string, string>;
-	customProviderKeys?: Array<{key: string, provider: string}>;
+	customProviderKeys?: Array<{ key: string, provider: string }>;
 }
 
 interface ResourceInfo {
@@ -332,7 +332,7 @@ class SetupManager {
 		let aiGatewayUrl: string | undefined;
 		const devVars: Record<string, string> = {};
 		const providedProviders: string[] = [];
-		let customProviderKeys: Array<{key: string, provider: string}> = [];
+		let customProviderKeys: Array<{ key: string, provider: string }> = [];
 
 		if (useAIGateway) {
 			console.log('✅ AI Gateway enabled - will auto-configure CLOUDFLARE_AI_GATEWAY_TOKEN');
@@ -874,7 +874,7 @@ class SetupManager {
 				try {
 					aiGatewayToken = await this.ensureAIGatewayToken();
 					tokenCreated = !!aiGatewayToken;
-					
+
 					if (aiGatewayToken) {
 						this.config.devVars.CLOUDFLARE_AI_GATEWAY_TOKEN = aiGatewayToken;
 						console.log('✅ Created and using specialized AI Gateway token');
@@ -1135,7 +1135,7 @@ class SetupManager {
 	}
 
 	private static readonly FALLBACK_WORKER_VARS = new Set([
-		'TEMPLATES_REPOSITORY', 'ALLOWED_EMAIL', 'DISPATCH_NAMESPACE', 'CLOUDFLARE_AI_GATEWAY', 'ENABLE_READ_REPLICAS',
+		'TEMPLATES_REPOSITORY', 'ALLOWED_EMAILS', 'DISPATCH_NAMESPACE', 'CLOUDFLARE_AI_GATEWAY', 'ENABLE_READ_REPLICAS',
 		'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GOOGLE_AI_STUDIO_API_KEY', 'OPENROUTER_API_KEY', 'CEREBRAS_API_KEY', 'GROQ_API_KEY',
 		'SANDBOX_SERVICE_API_KEY', 'SANDBOX_SERVICE_TYPE', 'SANDBOX_SERVICE_URL',
 		'CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_AI_GATEWAY_URL', 'CLOUDFLARE_AI_GATEWAY_TOKEN',
@@ -1241,7 +1241,7 @@ class SetupManager {
 
 		// AI Gateway Configuration
 		content += '# AI Gateway Configuration\n';
-        content += `CLOUDFLARE_AI_GATEWAY_TOKEN="${this.config.devVars?.CLOUDFLARE_AI_GATEWAY_TOKEN}"\n`;
+		content += `CLOUDFLARE_AI_GATEWAY_TOKEN="${this.config.devVars?.CLOUDFLARE_AI_GATEWAY_TOKEN}"\n`;
 		if (this.config.aiGatewayUrl) {
 			content += `CLOUDFLARE_AI_GATEWAY_URL="${this.config.aiGatewayUrl}"\n`;
 		}
@@ -1365,7 +1365,7 @@ class SetupManager {
 
 		// AI Gateway Configuration
 		content += '# AI Gateway Configuration\n';
-        content += `CLOUDFLARE_AI_GATEWAY_TOKEN="${this.config.prodVars?.CLOUDFLARE_AI_GATEWAY_TOKEN}"\n`;
+		content += `CLOUDFLARE_AI_GATEWAY_TOKEN="${this.config.prodVars?.CLOUDFLARE_AI_GATEWAY_TOKEN}"\n`;
 		if (this.config.aiGatewayUrl) {
 			content += `CLOUDFLARE_AI_GATEWAY_URL="${this.config.aiGatewayUrl}"\n`;
 		}

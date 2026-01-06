@@ -617,6 +617,10 @@ class ApiClient {
 			const errorMessage = error instanceof Error ? error.message : 'Failed to create agent session';
 			toast.error(errorMessage);
 
+			if (error instanceof ApiError) {
+				throw error;
+			}
+
 			throw new Error(errorMessage);
 		}
 	}
