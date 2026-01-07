@@ -59,12 +59,22 @@ export class AuthController extends BaseController {
 
             const validatedData = registerSchema.parse(bodyResult.data);
 
-            if (env.ALLOWED_EMAIL && validatedData.email !== env.ALLOWED_EMAIL) {
+            const allowedEmails = env.ALLOWED_EMAILS
+                ?.split(',')
+                .map(e => e.trim().toLowerCase())
+                .filter(Boolean);
+
+            if (
+                allowedEmails?.length &&
+                !allowedEmails.includes(validatedData.email.toLowerCase())
+            ) {
                 return AuthController.createErrorResponse(
-                    'Email Whitelisting is enabled. Please use the allowed email to register.',
+                    'Email whitelisting is enabled. Please use an allowed email to log in.',
                     403
                 );
             }
+
+
 
             const authService = new AuthService(env);
             const result = await authService.register(validatedData, request);
@@ -114,12 +124,21 @@ export class AuthController extends BaseController {
 
             const validatedData = loginSchema.parse(bodyResult.data);
 
-            if (env.ALLOWED_EMAIL && validatedData.email !== env.ALLOWED_EMAIL) {
+            const allowedEmails = env.ALLOWED_EMAILS
+                ?.split(',')
+                .map(e => e.trim().toLowerCase())
+                .filter(Boolean);
+
+            if (
+                allowedEmails?.length &&
+                !allowedEmails.includes(validatedData.email.toLowerCase())
+            ) {
                 return AuthController.createErrorResponse(
-                    'Email Whitelisting is enabled. Please use the allowed email to login.',
+                    'Email whitelisting is enabled. Please use an allowed email to log in.',
                     403
                 );
             }
+
 
             const authService = new AuthService(env);
             const result = await authService.login(validatedData, request);

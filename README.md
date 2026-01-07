@@ -89,7 +89,7 @@ Once you click "Deploy to Cloudflare", you'll be taken to your Cloudflare dashbo
 - `WEBHOOK_SECRET` - Webhook authentication secret
 - `SECRETS_ENCRYPTION_KEY` - Encryption key for secrets
 - `SANDBOX_INSTANCE_TYPE` - Container performance tier (optional, see section below)
-- `ALLOWED_EMAIL` - Email address of the user allowed to use the app. This is used to verify the user's identity and prevent unauthorized access.
+- `ALLOWED_EMAILS` - Email addresses of the users allowed to use the app. This is used to verify the user's identity and prevent unauthorized access.
 - `CUSTOM_DOMAIN` - Custom domain for your app that you have configured in Cloudflare (**Required**). If you use a first-level subdomain such as `abc.xyz.com`, make sure the Advanced Certificate Manager add-on is active on that zone.
 
 ### Custom domain DNS setup

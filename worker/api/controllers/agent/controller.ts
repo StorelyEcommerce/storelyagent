@@ -16,6 +16,7 @@ import { ImageType, uploadImage } from 'worker/utils/images';
 import { ProcessedImageAttachment } from 'worker/types/image-attachment';
 import { getTemplateImportantFiles } from 'worker/services/sandbox/utils';
 import { checkStoreInfoForInitialQuery } from '../../../agents/operations/UserConversationProcessor';
+import { GuardRailsOperation } from '../../../agents/operations/Guardrail';
 import { InferenceContext } from '../../../agents/inferutils/config.types';
 import { AppService } from '../../../database';
 import type { Blueprint } from '../../../agents/schemas';
@@ -79,6 +80,37 @@ export class CodingAgentController extends BaseController {
                     return CodingAgentController.createErrorResponse(JSON.stringify(error), 429);
                 }
             }
+
+
+
+            // --- GUARDRAIL CHECK ---
+            // We need to initialize minimal context for the guardrail
+            const guardrailOp = new GuardRailsOperation();
+            // Create a temporary logger and env-only context for the check
+            const guardrailResult = await guardrailOp.execute({ userInput: query }, {
+                env,
+                logger: this.logger,
+                context: {} as any, // Context not needed for guardrail
+                agent: {} as any,   // Agent not needed for guardrail
+                id: 'guardrail-check',
+                inferenceContext: {
+                    userModelConfigs: {}, // Will use defaults
+                    agentId: 'pre-init',
+                    userId: user.id,
+                    enableRealtimeCodeFix: false,
+                    enableFastSmartCodeFix: false
+                }
+            });
+
+            if (!guardrailResult.isAllowed) {
+                const errorMessage = guardrailResult.refusalReason || "I can only assist with building and modifying e-commerce stores.";
+                this.logger.info("Guardrail blocked initial request", { query, reason: errorMessage });
+
+                // Return a special error response that the frontend can display nicely
+                // We use 400 Bad Request to indicate valid request format but invalid content
+                return CodingAgentController.createErrorResponse(errorMessage, 400);
+            }
+            // --- END GUARDRAIL CHECK ---
 
             const agentId = generateId();
             const modelConfigService = new ModelConfigService(env);
