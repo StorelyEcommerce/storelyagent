@@ -59,11 +59,18 @@ export class AuthController extends BaseController {
 
             const validatedData = registerSchema.parse(bodyResult.data);
 
-            if (env.ALLOWED_EMAIL && validatedData.email !== env.ALLOWED_EMAIL) {
-                return AuthController.createErrorResponse(
-                    'Email Whitelisting is enabled. Please use the allowed email to register.',
-                    403
-                );
+            if (env.ALLOWED_EMAIL) {
+                const allowedEmails = env.ALLOWED_EMAIL
+                    .split(',')
+                    .map(e => e.trim().toLowerCase())
+                    .filter(Boolean);
+
+                if (allowedEmails.length > 0 && !allowedEmails.includes(validatedData.email.toLowerCase())) {
+                    return AuthController.createErrorResponse(
+                        'Email whitelisting is enabled. Please use an allowed email to register.',
+                        403
+                    );
+                }
             }
 
             const authService = new AuthService(env);
@@ -114,11 +121,18 @@ export class AuthController extends BaseController {
 
             const validatedData = loginSchema.parse(bodyResult.data);
 
-            if (env.ALLOWED_EMAIL && validatedData.email !== env.ALLOWED_EMAIL) {
-                return AuthController.createErrorResponse(
-                    'Email Whitelisting is enabled. Please use the allowed email to login.',
-                    403
-                );
+            if (env.ALLOWED_EMAIL) {
+                const allowedEmails = env.ALLOWED_EMAIL
+                    .split(',')
+                    .map(e => e.trim().toLowerCase())
+                    .filter(Boolean);
+
+                if (allowedEmails.length > 0 && !allowedEmails.includes(validatedData.email.toLowerCase())) {
+                    return AuthController.createErrorResponse(
+                        'Email whitelisting is enabled. Please use an allowed email to login.',
+                        403
+                    );
+                }
             }
 
             const authService = new AuthService(env);
