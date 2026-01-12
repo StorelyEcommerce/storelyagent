@@ -404,9 +404,10 @@ export interface AgentConfig {
     screenshotAnalysis: ModelConfig;
     realtimeCodeFixer: ModelConfig;
     fastCodeFixer: ModelConfig;
-    conversationalResponse: ModelConfig;
-    deepDebugger: ModelConfig;
-    agenticProjectBuilder: ModelConfig;
+	conversationalResponse: ModelConfig;
+	deepDebugger: ModelConfig;
+	agenticProjectBuilder: ModelConfig;
+	guardrailCheck: ModelConfig;
 }
 
 // Provider and reasoning effort types for validation
