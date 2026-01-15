@@ -605,7 +605,7 @@ class ApiClient {
 			if (!response.ok) {
 				// Parse error response if available
 				const errorMessage = data?.error?.message || `Agent creation failed with status: ${response.status}`;
-				throw new Error(errorMessage);
+				throw new ApiError(response.status, response.statusText, errorMessage, '/api/agent');
 			}
 
 			return {
@@ -613,6 +613,15 @@ class ApiClient {
 				stream: response
 			};
 		} catch (error) {
+			// Re-throw ApiError as-is to preserve status code
+			if (error instanceof ApiError) {
+				// Only show toast for non-guardrail errors (403 = guardrail rejection, handled separately)
+				if (error.status !== 403) {
+					toast.error(error.message);
+				}
+				throw error;
+			}
+
 			// Handle any network or parsing errors
 			const errorMessage = error instanceof Error ? error.message : 'Failed to create agent session';
 			toast.error(errorMessage);
