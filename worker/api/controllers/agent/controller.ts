@@ -16,6 +16,7 @@ import { ImageType, uploadImage } from 'worker/utils/images';
 import { ProcessedImageAttachment } from 'worker/types/image-attachment';
 import { getTemplateImportantFiles } from 'worker/services/sandbox/utils';
 import { checkStoreInfoForInitialQuery } from '../../../agents/operations/UserConversationProcessor';
+import { checkGuardrail, getGuardrailRejectionMessage } from '../../../agents/operations/Guardrail';
 import { InferenceContext } from '../../../agents/inferutils/config.types';
 import { AppService } from '../../../database';
 import type { Blueprint } from '../../../agents/schemas';
@@ -81,6 +82,31 @@ export class CodingAgentController extends BaseController {
             }
 
             const agentId = generateId();
+
+            // Run guardrail check before proceeding
+            const guardrailResult = await checkGuardrail(query, env, {
+                agentId,
+                userId: user.id,
+                enableRealtimeCodeFix: false,
+                enableFastSmartCodeFix: false,
+            });
+
+            if (!guardrailResult.isAllowed) {
+                this.logger.info('Request rejected by guardrail', {
+                    reason: guardrailResult.reason,
+                    explanation: guardrailResult.explanation,
+                    queryPreview: query.substring(0, 100)
+                });
+                return CodingAgentController.createErrorResponse(
+                    getGuardrailRejectionMessage(guardrailResult),
+                    403
+                );
+            }
+
+            this.logger.info('Request passed guardrail check', {
+                reason: guardrailResult.reason
+            });
+
             const modelConfigService = new ModelConfigService(env);
 
             // Fetch all user model configs, api keys and agent instance at once
