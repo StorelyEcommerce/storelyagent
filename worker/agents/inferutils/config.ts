@@ -161,7 +161,7 @@ export const AGENT_CONFIG: AgentConfig = {
         fallbackModel: AIModels.OPENAI_5_2,
     },
     guardrailCheck: {
-        name: AIModels.CLAUDE_4_5_SONNET,
+        name: AIModels.CLAUDE_4_5_HAIKU,
         reasoning_effort: 'low',
         max_tokens: 1000,
         temperature: 0,

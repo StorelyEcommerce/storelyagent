@@ -145,4 +145,12 @@ export const ConversationalResponseSchema = z.object({
 
 export type ConversationalResponseType = z.infer<typeof ConversationalResponseSchema>;
 
+// Guardrail Schema - validates if request is appropriate for e-commerce store building
+export const GuardrailSchema = z.object({
+    isAllowed: z.boolean().describe('Whether the request should be allowed to proceed'),
+    reason: z.enum(['ecommerce_build', 'ecommerce_modify', 'rejected_off_topic', 'rejected_general_question', 'rejected_harmful']).describe('The reason for the decision'),
+    explanation: z.string().describe('Brief explanation of why the request was allowed or rejected'),
+});
+
+export type GuardrailOutputType = z.infer<typeof GuardrailSchema>;
 
