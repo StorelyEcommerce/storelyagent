@@ -40,6 +40,7 @@ import { FastCodeFixerOperation } from '../operations/PostPhaseCodeFixer';
 import { looksLikeCommand, validateAndCleanBootstrapCommands } from '../utils/common';
 import { customizePackageJson, customizeTemplateFiles, generateBootstrapScript, generateProjectName } from '../utils/templateCustomizer';
 import { generateBlueprint } from '../planning/blueprint';
+import { generateDesignDNA } from '../planning/designDna';
 import { AppService } from '../../database';
 import { RateLimitExceededError } from 'shared/types/errors';
 import { ImageAttachment, type ProcessedImageAttachment } from '../../types/image-attachment';
@@ -142,6 +143,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
 
     initialState: CodeGenState = {
         blueprint: {} as Blueprint,
+        designDNA: undefined,
         projectName: "",
         query: "",
         generatedPhases: [],
@@ -232,6 +234,16 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             });
         }
 
+        // Generate design DNA before blueprint planning
+        this.logger().info('Generating design DNA', { query, queryLength: query.length, imagesCount: initArgs.images?.length || 0 });
+        const designDNA = await generateDesignDNA({
+            env: this.env,
+            inferenceContext,
+            query,
+            templateSelection: templateInfo.selection,
+            images: initArgs.images,
+        });
+
         // Generate a blueprint
         this.logger().info('Generating blueprint', { query, queryLength: query.length, imagesCount: initArgs.images?.length || 0 });
         this.logger().info(`Using language: ${language}, frameworks: ${frameworks ? frameworks.join(", ") : "none"}`);
@@ -251,6 +263,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             frameworks: frameworks!,
             templateDetails: templateInfo.templateDetails,
             templateMetaInfo: templateInfo.selection,
+            designDNA,
             images: initArgs.images,
             stream: {
                 chunk_size: 256,
@@ -278,6 +291,7 @@ export class SimpleCodeGeneratorAgent extends Agent<Env, CodeGenState> {
             projectName,
             query,
             blueprint,
+            designDNA,
             templateName: templateInfo.templateDetails.name,
             sandboxInstanceId: undefined,
             generatedPhases: [],

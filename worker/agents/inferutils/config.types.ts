@@ -39,9 +39,11 @@ export enum AIModels {
     OPENAI_5 = 'openai/gpt-5',
     OPENAI_5_1 = 'openai/gpt-5.1',
     OPENAI_5_2 = 'openai/gpt-5.2',
+    OPENAI_5_3 = 'openai/gpt-5.3',
     OPENAI_5_MINI = 'openai/gpt-5-mini',
     OPENAI_OSS = 'openai/gpt-oss-120b',
     OPENAI_CODEX = 'openai/gpt-5.1-codex-max',
+    OPENAI_CODEX_5_3 = 'openai/gpt-5.3-codex',
 
     // OPENROUTER_QWEN_3_CODER = '[openrouter]qwen/qwen3-coder',
     // OPENROUTER_KIMI_2_5 = '[openrouter]moonshotai/kimi-k2',

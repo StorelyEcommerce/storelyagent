@@ -6,7 +6,18 @@ export const TemplateSelectionSchema = z.object({
     reasoning: z.string().describe('Brief explanation for the selection or why no template was chosen.'),
     useCase: z.string().optional().nullable().describe('Brief description of the ecommerce store type (e.g., "video game store", "fashion boutique", "electronics shop")'),
     complexity: z.enum(['simple', 'moderate', 'complex']).optional().nullable().describe('The complexity of developing the project based on the the user query'),
-    styleSelection: z.enum(['Minimalist Design', 'Brutalism', 'Retro', 'Illustrative', 'Kid_Playful', 'Custom']).optional().nullable().describe('Pick a style relevant to the user query'),
+    styleSelection: z.enum([
+        'Minimalist Design',
+        'Brutalism',
+        'Retro',
+        'Illustrative',
+        'Kid_Playful',
+        'Editorial Luxe',
+        'Organic Natural',
+        'Tech Futurism',
+        'Bold Experimental',
+        'Custom'
+    ]).optional().nullable().describe('Pick a style relevant to the user query'),
     projectName: z.string().describe('The name of the project based on the user query'),
 });
 
@@ -108,6 +119,17 @@ export const BlueprintSchemaLite = BlueprintSchema.omit({
     initialPhase: true,
 });
 
+export const DesignDNASchema = z.object({
+    visualDirection: z.string().describe('Short summary of the storefront visual direction and brand tone'),
+    colorStrategy: z.array(z.string()).describe('3-6 concise color and contrast directives, including accent usage'),
+    typographySystem: z.array(z.string()).describe('Typography hierarchy and pairings with practical guidance'),
+    layoutPrinciples: z.array(z.string()).describe('Core layout rules and composition constraints'),
+    componentMotifs: z.array(z.string()).describe('Recurring component styling motifs to keep UI cohesive'),
+    motionGuidelines: z.array(z.string()).describe('Animation and interaction guidance that improves polish without excess'),
+    antiPatterns: z.array(z.string()).describe('Visual or UX patterns to avoid for this storefront'),
+    moodKeywords: z.array(z.string()).describe('5-10 keywords capturing the intended aesthetic mood'),
+});
+
 export const SetupCommandsSchema = z.object({
     commands: z.array(z.string()).describe('Commands to set up the development environment and install all dependencies not already in the template. These will run before code generation starts.')
 });
@@ -125,6 +147,7 @@ export const ScreenshotAnalysisSchema = z.object({
 
 export type TemplateSelection = z.infer<typeof TemplateSelectionSchema>;
 export type Blueprint = z.infer<typeof BlueprintSchema>;
+export type DesignDNA = z.infer<typeof DesignDNASchema>;
 export type FileConceptType = z.infer<typeof FileConceptSchema>;
 export type PhaseConceptType = z.infer<typeof PhaseConceptSchema>;
 export type PhaseConceptLiteType = z.infer<typeof PhaseConceptLiteSchema>;
@@ -153,4 +176,3 @@ export const GuardrailSchema = z.object({
 });
 
 export type GuardrailOutputType = z.infer<typeof GuardrailSchema>;
-

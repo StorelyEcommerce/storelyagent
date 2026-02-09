@@ -1,4 +1,4 @@
-import { Blueprint } from '../../schemas';
+import { Blueprint, DesignDNA } from '../../schemas';
 import { FileTreeNode, TemplateDetails } from '../../../services/sandbox/sandboxTypes';
 import { CodeGenState, FileState, PhaseState } from '../../core/state';
 import { DependencyManagement } from '../pure/DependencyManagement';
@@ -13,6 +13,7 @@ export class GenerationContext {
     constructor(
         public readonly query: string,
         public readonly blueprint: Blueprint,
+        public readonly designDNA: DesignDNA | undefined,
         public readonly templateDetails: TemplateDetails,
         public readonly dependencies: Record<string, string>,
         public readonly allFiles: FileState[],
@@ -45,6 +46,7 @@ export class GenerationContext {
         return new GenerationContext(
             state.query,
             state.blueprint,
+            state.designDNA,
             templateDetails,
             dependencies,
             allFiles,

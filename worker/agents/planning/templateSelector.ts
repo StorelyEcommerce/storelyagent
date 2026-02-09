@@ -86,6 +86,10 @@ Reasoning: "Base store template provides flexible product management, multiple c
 - **Retro**: Vintage, nostalgic design elements
 - **Illustrative**: Rich graphics and visual storytelling
 - **Kid_Playful**: Colorful, fun, child-friendly interfaces
+- **Editorial Luxe**: Premium, fashion-forward, refined typography and layout
+- **Organic Natural**: Earthy tones, tactile spacing, handcrafted feel
+- **Tech Futurism**: High-contrast, neon accents, futuristic UI motifs
+- **Bold Experimental**: Asymmetry, unusual grids, daring visual hierarchy
 - **Custom**: Design that doesn't fit any of the above categories
 
 ## RULES:
@@ -94,6 +98,9 @@ Reasoning: "Base store template provides flexible product management, multiple c
 - If multiple templates are available, use selection criteria to choose the best match
 - Ignore misleading template names - analyze actual features
 - Focus on functionality over naming conventions
+- For styleSelection, derive style primarily from user-provided text and images (brand adjectives, mood words, aesthetic references)
+- If your own inferred style conflicts with explicit user styling cues, follow the user's cues
+- For styleSelection, prefer non-default styles when the prompt indicates a strong brand identity or mood
 - Provide clear, specific reasoning for selection`
 
         const userPrompt = `**User Request:** "${query}"

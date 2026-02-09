@@ -12,12 +12,13 @@ export function getSystemPromptWithProjectContext(
     context: GenerationContext,
     serializerType: CodeSerializerType = CodeSerializerType.SIMPLE
 ): Message[] {
-    const { query, blueprint, templateDetails, dependencies, allFiles, commandsHistory } = context;
+    const { query, blueprint, designDNA, templateDetails, dependencies, allFiles, commandsHistory } = context;
 
     const messages = [
         createSystemMessage(generalSystemPromptBuilder(systemPrompt, {
             query,
             blueprint,
+            designDNA,
             templateDetails,
             dependencies,
         })), 

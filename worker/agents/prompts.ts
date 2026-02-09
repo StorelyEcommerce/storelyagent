@@ -1,7 +1,7 @@
 import { FileTreeNode, RuntimeError, StaticAnalysisResponse, TemplateDetails } from "../services/sandbox/sandboxTypes";
 import { TemplateRegistry } from "./inferutils/schemaFormatters";
 import z from 'zod';
-import { Blueprint, BlueprintSchemaLite, FileOutputType, PhaseConceptLiteSchema, PhaseConceptSchema, PhaseConceptType, TemplateSelection } from "./schemas";
+import { Blueprint, BlueprintSchemaLite, DesignDNA, DesignDNASchema, FileOutputType, PhaseConceptLiteSchema, PhaseConceptSchema, PhaseConceptType, TemplateSelection } from "./schemas";
 import { IssueReport } from "./domain/values/IssueReport";
 import { FileState, MAX_PHASES } from "./core/state";
 import { CODE_SERIALIZERS, CodeSerializerType } from "./utils/codeSerializers";
@@ -1463,6 +1463,7 @@ export interface GeneralSystemPromptBuilderParams {
     templateDetails: TemplateDetails,
     dependencies: Record<string, string>,
     blueprint?: Blueprint,
+    designDNA?: DesignDNA,
     language?: string,
     frameworks?: string[],
     templateMetaInfo?: TemplateSelection,
@@ -1476,7 +1477,8 @@ export function generalSystemPromptBuilder(
     const variables: Record<string, string> = {
         query: params.query,
         template: PROMPT_UTILS.serializeTemplate(params.templateDetails),
-        dependencies: JSON.stringify(params.dependencies ?? {})
+        dependencies: JSON.stringify(params.dependencies ?? {}),
+        designDNA: ''
     };
 
     // Optional blueprint variables
@@ -1502,7 +1504,10 @@ export function generalSystemPromptBuilder(
     }
 
     const formattedPrompt = PROMPT_UTILS.replaceTemplateVariables(prompt, variables);
-    return PROMPT_UTILS.verifyPrompt(formattedPrompt);
+    const designDNAContext = params.designDNA
+        ? `\n\n<DESIGN_DNA>\n${TemplateRegistry.markdown.serialize(params.designDNA, DesignDNASchema)}\n</DESIGN_DNA>\n`
+        : '';
+    return PROMPT_UTILS.verifyPrompt(`${formattedPrompt}${designDNAContext}`);
 }
 
 export function issuesPromptFormatter(issues: IssueReport): string {
@@ -1632,6 +1637,30 @@ const getStyleInstructions = (style: TemplateSelection['styleSelection']): strin
 - Smooth, rounded shapes and clean borders—no gradients or realism
 - Similar to Pablo Stanley, Burnt Toast Creative, or Outline-style art.
 - Children’s book meets modern web`
+        case 'Editorial Luxe':
+            return `
+**Style Name: Editorial Luxe**
+- Characteristics: Refined typography, high contrast layouts, premium whitespace and rhythm.
+- Philosophy: Sophisticated and polished visual identity inspired by modern fashion editorials.
+- Example Elements: Serif + sans pairing, oversized headings, modular editorial cards, subtle luxury accents.`;
+        case 'Organic Natural':
+            return `
+**Style Name: Organic Natural**
+- Characteristics: Earth-toned palette, rounded organic forms, tactile spacing and calm hierarchy.
+- Philosophy: Human, grounded, handcrafted feeling without looking rustic or outdated.
+- Example Elements: Soft gradients, layered neutral backgrounds, natural texture simulations, gentle motion cues.`;
+        case 'Tech Futurism':
+            return `
+**Style Name: Tech Futurism**
+- Characteristics: Sharp contrast, glowing accents, precision layouts, modern depth cues.
+- Philosophy: Forward-looking, high-performance digital brand aesthetic.
+- Example Elements: Neon accent lines, glassy panels, bold dark/light contrast, geometric iconography.`;
+        case 'Bold Experimental':
+            return `
+**Style Name: Bold Experimental**
+- Characteristics: Unexpected visual hierarchy, asymmetrical grids, expressive typography.
+- Philosophy: Distinctive and memorable storefront identity that breaks conventional patterns while preserving usability.
+- Example Elements: Layered cards, rotated motif accents, color blocking, strong section transitions.`;
         case 'Minimalist Design':
             return `
 **Style Name: Minimalist Design**

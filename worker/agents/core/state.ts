@@ -1,5 +1,5 @@
 import type {
-    Blueprint, PhaseConceptType,
+    Blueprint, DesignDNA, PhaseConceptType,
     FileOutputType,
 } from '../schemas';
 // import type { ScreenshotData } from './types';
@@ -28,6 +28,7 @@ export const MAX_PHASES = 12;
 
 export interface CodeGenState {
     blueprint: Blueprint;
+    designDNA?: DesignDNA;
     projectName: string,
     query: string;
     generatedFilesMap: Record<string, FileState>;

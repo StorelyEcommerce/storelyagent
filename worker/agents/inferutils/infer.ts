@@ -102,8 +102,8 @@ export async function executeInference<T extends z.AnyZodObject>(   {
     const backoffMs = (attempt: number) => Math.min(500 * Math.pow(2, attempt), 10000);
 
     let useFallbackModel = false;
-    // Use the configured fallback model, or default to GPT-4.1 (widely available)
-    const fallbackModelName = finalConf?.fallbackModel || AIModels.OPENAI_4_1;
+    // Use the configured fallback model, or default to GPT-5.2
+    const fallbackModelName = finalConf?.fallbackModel || AIModels.OPENAI_5_2;
 
     for (let attempt = 0; attempt < retryLimit; attempt++) {
         const currentModel = useFallbackModel ? fallbackModelName : modelName;
