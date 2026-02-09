@@ -13,6 +13,8 @@ import { IsRealtimeCodeFixerEnabled, RealtimeCodeFixer } from '../assistants/rea
 import { CodeSerializerType } from '../utils/codeSerializers';
 import type { UserContext } from '../core/types';
 import { imagesToBase64 } from 'worker/utils/images';
+import { ManusOperationConfig } from '../inferutils/config.types';
+import { executeManusCodeGeneration } from 'worker/services/manus';
 
 export interface PhaseImplementationInputs {
     phase: PhaseConceptType
@@ -20,6 +22,8 @@ export interface PhaseImplementationInputs {
     isFirstPhase: boolean
     shouldAutoFix: boolean
     userContext?: UserContext;
+    /** Optional: Use Manus AI for code generation instead of default inference */
+    manusConfig?: ManusOperationConfig;
     fileGeneratingCallback: (filePath: string, filePurpose: string) => void
     fileChunkGeneratedCallback: (filePath: string, chunk: string, format: 'full_content' | 'unified_diff') => void
     fileClosedCallback: (file: FileOutputType, message: string) => void
@@ -488,8 +492,16 @@ export class PhaseImplementationOperation extends AgentOperation<PhaseImplementa
         inputs: PhaseImplementationInputs,
         options: OperationOptions
     ): Promise<PhaseImplementationOutputs> {
-        const { phase, issues, userContext } = inputs;
+        const { phase, issues, userContext, manusConfig } = inputs;
         const { env, logger, context } = options;
+
+        // Check if Manus should be used for this operation
+        if (manusConfig?.enabled && env.MANUS_API_KEY) {
+            logger.info(`Using Manus AI for phase: ${phase.name}`, {
+                agentProfile: manusConfig.agentProfile || 'manus-1.6',
+            });
+            return this.executeWithManus(inputs, options);
+        }
 
         logger.info(`Generating files for phase: ${phase.name}`, phase.description, "files:", phase.files.map(f => f.path));
 
@@ -639,5 +651,108 @@ export class PhaseImplementationOperation extends AgentOperation<PhaseImplementa
             logger.error("Error generating README:", error);
             throw error;
         }
+    }
+
+    /**
+     * Execute phase implementation using Manus AI API
+     * 
+     * Manus uses a task-based API with polling instead of streaming inference.
+     */
+    private async executeWithManus(
+        inputs: PhaseImplementationInputs,
+        options: OperationOptions
+    ): Promise<PhaseImplementationOutputs> {
+        const { phase, manusConfig } = inputs;
+        const { env, logger, context } = options;
+
+        logger.info(`Starting Manus code generation for phase: ${phase.name}`, {
+            files: phase.files.map(f => f.path),
+            agentProfile: manusConfig?.agentProfile || 'manus-1.6',
+        });
+
+        // Build the prompt for Manus
+        const phaseText = TemplateRegistry.markdown.serialize(phase, PhaseConceptSchema);
+        const phasePrompt = `
+You are implementing a phase of an ecommerce store project.
+
+<PHASE_SPECIFICATION>
+${phaseText}
+</PHASE_SPECIFICATION>
+
+<BLUEPRINT>
+Project: ${context.blueprint?.projectName || 'Ecommerce Store'}
+Description: ${context.blueprint?.description || ''}
+</BLUEPRINT>
+
+Implement all the files listed in the phase specification. Follow the existing code patterns and use only the dependencies already present in the project.
+`;
+
+        // Prepare codebase files for context
+        const codebaseFiles = context.allFiles.map(f => ({
+            path: f.filePath,
+            content: f.fileContents,
+        }));
+
+        // Execute Manus code generation
+        const result = await executeManusCodeGeneration(env, {
+            prompt: phasePrompt,
+            codebaseFiles,
+            agentProfile: manusConfig?.agentProfile || 'manus-1.6',
+            timeoutMs: manusConfig?.timeoutMs || 600000,
+            abortSignal: options.inferenceContext.abortSignal,
+            onProgress: (message) => {
+                logger.info(`Manus progress: ${message}`);
+            },
+        });
+
+        if (!result.success) {
+            logger.error('Manus code generation failed', {
+                error: result.error,
+                taskId: result.taskId,
+            });
+            throw new Error(`Manus code generation failed: ${result.error}`);
+        }
+
+        logger.info('Manus code generation completed', {
+            taskId: result.taskId,
+            fileCount: result.files?.length || 0,
+            taskUrl: result.taskUrl,
+        });
+
+        // Process generated files
+        const fixedFilePromises: Promise<FileOutputType>[] = [];
+
+        for (const file of result.files || []) {
+            // Notify file generation start
+            const filePurpose = FileProcessing.findFilePurpose(
+                file.path,
+                phase,
+                context.allFiles.reduce((acc, f) => ({ ...acc, [f.filePath]: f }), {})
+            );
+            inputs.fileGeneratingCallback(file.path, filePurpose);
+
+            // For Manus, we receive complete file content, so stream it all at once
+            inputs.fileChunkGeneratedCallback(file.path, file.content, 'full_content');
+
+            const generatedFile: FileOutputType = {
+                filePath: file.path,
+                fileContents: file.content,
+                filePurpose: file.purpose || filePurpose,
+            };
+
+            inputs.fileClosedCallback(generatedFile, `Manus generated ${file.path}`);
+            fixedFilePromises.push(Promise.resolve(generatedFile));
+        }
+
+        logger.info(`Manus phase implementation complete for: ${phase.name}`, {
+            fileCount: fixedFilePromises.length,
+            taskUrl: result.taskUrl,
+        });
+
+        return {
+            fixedFilePromises,
+            deploymentNeeded: fixedFilePromises.length > 0,
+            commands: [], // Manus doesn't extract commands in the same way
+        };
     }
 }

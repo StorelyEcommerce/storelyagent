@@ -9,32 +9,32 @@ import { ReasoningEffort } from "openai/resources.mjs";
 export enum AIModels {
     DISABLED = 'disabled',
 
-	GEMINI_2_0_FLASH = 'google-ai-studio/gemini-2.0-flash',
-	GEMINI_2_5_PRO = 'google-ai-studio/gemini-2.5-pro',
-	GEMINI_2_5_FLASH = 'google-ai-studio/gemini-2.5-flash',
-	GEMINI_2_5_FLASH_LITE = 'google-ai-studio/gemini-2.5-flash-lite',
+    GEMINI_2_0_FLASH = 'google-ai-studio/gemini-2.0-flash',
+    GEMINI_2_5_PRO = 'google-ai-studio/gemini-2.5-pro',
+    GEMINI_2_5_FLASH = 'google-ai-studio/gemini-2.5-flash',
+    GEMINI_2_5_FLASH_LITE = 'google-ai-studio/gemini-2.5-flash-lite',
 
-	GEMINI_1_5_FLASH_8B = 'google-ai-studio/gemini-1.5-flash-8b-latest',
+    GEMINI_1_5_FLASH_8B = 'google-ai-studio/gemini-1.5-flash-8b-latest',
     GEMINI_2_5_FLASH_LATEST = 'google-ai-studio/gemini-2.5-flash-latest',
     GEMINI_2_5_FLASH_LITE_LATEST = 'google-ai-studio/gemini-2.5-flash-lite-latest',
     GEMINI_2_5_PRO_LATEST = 'google-ai-studio/gemini-2.5-pro-latest',
 
-	GEMINI_2_5_PRO_PREVIEW_05_06 = 'google-ai-studio/gemini-2.5-pro-preview-05-06',
-	GEMINI_2_5_FLASH_PREVIEW_04_17 = 'google-ai-studio/gemini-2.5-flash-preview-04-17',
-	GEMINI_2_5_FLASH_PREVIEW_05_20 = 'google-ai-studio/gemini-2.5-flash-preview-05-20',
-	GEMINI_2_5_PRO_PREVIEW_06_05 = 'google-ai-studio/gemini-2.5-pro-preview-06-05',
+    GEMINI_2_5_PRO_PREVIEW_05_06 = 'google-ai-studio/gemini-2.5-pro-preview-05-06',
+    GEMINI_2_5_FLASH_PREVIEW_04_17 = 'google-ai-studio/gemini-2.5-flash-preview-04-17',
+    GEMINI_2_5_FLASH_PREVIEW_05_20 = 'google-ai-studio/gemini-2.5-flash-preview-05-20',
+    GEMINI_2_5_PRO_PREVIEW_06_05 = 'google-ai-studio/gemini-2.5-pro-preview-06-05',
 
-	CLAUDE_3_5_SONNET_LATEST = 'anthropic/claude-3-5-sonnet-latest',
-	CLAUDE_3_7_SONNET_20250219 = 'anthropic/claude-3-7-sonnet-20250219',
-	CLAUDE_4_OPUS = 'anthropic/claude-opus-4-20250514',
-	CLAUDE_4_SONNET = 'anthropic/claude-sonnet-4-20250514',
+    CLAUDE_3_5_SONNET_LATEST = 'anthropic/claude-3-5-sonnet-latest',
+    CLAUDE_3_7_SONNET_20250219 = 'anthropic/claude-3-7-sonnet-20250219',
+    CLAUDE_4_OPUS = 'anthropic/claude-opus-4-20250514',
+    CLAUDE_4_SONNET = 'anthropic/claude-sonnet-4-20250514',
     CLAUDE_4_5_SONNET = 'anthropic/claude-sonnet-4-5',
     CLAUDE_4_5_OPUS = 'anthropic/claude-opus-4-5',
 
-	OPENAI_O3 = 'openai/o3',
-	OPENAI_O4_MINI = 'openai/o4-mini',
-	OPENAI_CHATGPT_4O_LATEST = 'openai/chatgpt-4o-latest',
-	OPENAI_4_1 = 'openai/gpt-4.1-2025-04-14',
+    OPENAI_O3 = 'openai/o3',
+    OPENAI_O4_MINI = 'openai/o4-mini',
+    OPENAI_CHATGPT_4O_LATEST = 'openai/chatgpt-4o-latest',
+    OPENAI_4_1 = 'openai/gpt-4.1-2025-04-14',
     OPENAI_5 = 'openai/gpt-5',
     OPENAI_5_1 = 'openai/gpt-5.1',
     OPENAI_5_2 = 'openai/gpt-5.2',
@@ -48,6 +48,11 @@ export enum AIModels {
     // Cerebras models
     CEREBRAS_GPT_OSS = 'cerebras/gpt-oss-120b',
     CEREBRAS_QWEN_3_CODER = 'cerebras/qwen-3-coder-480b',
+
+    // Manus AI models (task-based API)
+    MANUS_1_6 = 'manus/manus-1.6',
+    MANUS_1_6_LITE = 'manus/manus-1.6-lite',
+    MANUS_1_6_MAX = 'manus/manus-1.6-max',
 }
 
 export interface ModelConfig {
@@ -91,4 +96,17 @@ export interface InferenceContext extends InferenceMetadata {
     enableRealtimeCodeFix: boolean;
     enableFastSmartCodeFix: boolean;
     abortSignal?: AbortSignal;
+}
+
+/**
+ * Configuration for using Manus AI for a specific operation.
+ * Manus uses a task-based API with polling, not streaming.
+ */
+export interface ManusOperationConfig {
+    /** Enable Manus for this operation */
+    enabled: boolean;
+    /** Agent profile to use */
+    agentProfile?: 'manus-1.6' | 'manus-1.6-lite' | 'manus-1.6-max';
+    /** Timeout in milliseconds for task completion (default: 600000 = 10 min) */
+    timeoutMs?: number;
 }
