@@ -8,6 +8,7 @@ import {
 } from 'react';
 import { ArrowRight, Image as ImageIcon } from 'react-feather';
 import { useParams, useSearchParams, useNavigate } from 'react-router';
+import { toast } from 'sonner';
 import { MonacoEditor } from '../../components/monaco-editor/monaco-editor';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Expand, Github, GitBranch, LoaderCircle, RefreshCw, MoreHorizontal, RotateCcw, X } from 'lucide-react';
@@ -63,6 +64,9 @@ export default function Chat() {
 	// Load existing app data if chatId is provided
 	const { app, loading: appLoading, refetch: refetchApp } = useApp(urlChatId);
 
+	// Navigation - moved up so it can be used in callbacks passed to hooks
+	const navigate = useNavigate();
+
 	// If we have an existing app, use its data
 	const displayQuery = app ? app.originalPrompt || app.title : userQuery || '';
 	const appTitle = app?.title;
@@ -87,6 +91,15 @@ export default function Chat() {
 		},
 		[],
 	);
+
+	// Handle guardrail rejection - navigate to home and show rejection message
+	const handleGuardrailRejection = useCallback((message: string) => {
+		toast.warning('Request not allowed', {
+			description: message,
+			duration: 8000,
+		});
+		navigate('/');
+	}, [navigate]);
 
 	const {
 		messages,
@@ -125,13 +138,12 @@ export default function Chat() {
 		images: userImages,
 		agentMode: agentMode as 'deterministic' | 'smart',
 		onDebugMessage: addDebugMessage,
+		onGuardrailRejection: handleGuardrailRejection,
 	});
 
 	// GitHub export functionality - use urlChatId directly from URL params
 	const githubExport = useGitHubExport(websocket, urlChatId, refetchApp);
 	const { user } = useAuth();
-
-	const navigate = useNavigate();
 
 	const [activeFilePath, setActiveFilePath] = useState<string>();
 	const [view, setView] = useState<'editor' | 'preview' | 'blueprint' | 'terminal'>(
