@@ -1,14 +1,16 @@
-import { infer, InferError, InferResponseString, InferResponseObject, AbortError } from './core';
+import { infer, InferError, InferResponseString, InferResponseObject, AbortError, CompletionConfig } from './core';
 import { createAssistantMessage, createUserMessage, Message } from './common';
 import z from 'zod';
 // import { CodeEnhancementOutput, CodeEnhancementOutputType } from '../codegen/phasewiseGenerator';
 import { SchemaFormat } from './schemaFormatters';
-import { ReasoningEffort } from 'openai/resources.mjs';
+import type { ReasoningEffort } from './config.types';
 import { AgentActionKey, AIModels, InferenceContext, ModelConfig } from './config.types';
 import { AGENT_CONFIG } from './config';
 import { createLogger } from '../../logger';
 import { RateLimitExceededError, SecurityError } from 'shared/types/errors';
 import { ToolDefinition } from '../tools/types';
+import { validateAgentConstraints } from 'worker/api/controllers/modelConfig/constraintHelper';
+import { isValidAIModel } from './config.types';
 
 const logger = createLogger('InferenceUtils');
 
@@ -16,6 +18,64 @@ const responseRegenerationPrompts = `
 The response you provided was either in an incorrect/unparsable format or was incomplete.
 Please provide a valid response that matches the expected output format exactly.
 `;
+
+/**
+ * Resolves model configuration with field-by-field merge
+ *
+ * Precedence: userConfig > AGENT_CONFIG defaults
+ * Each field is resolved independently (first defined value wins)
+ */
+function resolveModelConfig(
+    agentActionName: AgentActionKey,
+    userConfig?: ModelConfig,
+): ModelConfig {
+    const defaultConfig = AGENT_CONFIG[agentActionName];
+
+    const merged: ModelConfig = {
+        name: userConfig?.name ?? defaultConfig.name,
+        reasoning_effort: userConfig?.reasoning_effort ?? defaultConfig.reasoning_effort,
+        max_tokens: userConfig?.max_tokens ?? defaultConfig.max_tokens,
+        temperature: userConfig?.temperature ?? defaultConfig.temperature,
+        fallbackModel: userConfig?.fallbackModel ?? defaultConfig.fallbackModel,
+    };
+
+    // Validate model name - try userConfig first, then default
+    const modelCandidates = [userConfig?.name, defaultConfig.name]
+        .filter((n): n is AIModels | string => n !== undefined);
+
+    let validModelName: AIModels | string | undefined;
+    for (const candidate of modelCandidates) {
+        if (!isValidAIModel(candidate)) {
+            logger.warn(`Model ${candidate} not valid, trying next`);
+            continue;
+        }
+        const check = validateAgentConstraints(agentActionName, candidate);
+        if (check.constraintEnabled && !check.valid) {
+            logger.warn(`Model ${candidate} violates constraints for ${agentActionName}`);
+            continue;
+        }
+        validModelName = candidate;
+        break;
+    }
+
+    if (!validModelName) {
+        logger.warn(`No valid model found for ${agentActionName}, using default`);
+        validModelName = defaultConfig.name;
+    }
+    merged.name = validModelName;
+
+    // Validate fallback model
+    if (merged.fallbackModel) {
+        const fallbackCheck = validateAgentConstraints(agentActionName, merged.fallbackModel);
+        if (fallbackCheck.constraintEnabled && !fallbackCheck.valid) {
+            logger.warn(`Fallback ${merged.fallbackModel} violates constraints, using default`);
+            merged.fallbackModel = defaultConfig.fallbackModel;
+        }
+    }
+
+    logger.info(`Resolved config for ${agentActionName}: model=${merged.name}, fallback=${merged.fallbackModel}`);
+    return merged;
+}
 
 /**
  * Helper function to execute AI inference with consistent error handling
@@ -38,8 +98,9 @@ interface InferenceParamsBase {
         onChunk: (chunk: string) => void;
     };
     reasoning_effort?: ReasoningEffort;
-    modelConfig?: ModelConfig;
     context: InferenceContext;
+    onAssistantMessage?: (message: Message) => Promise<void>;
+    completionConfig?: CompletionConfig;
 }
 
 interface InferenceParamsStructured<T extends z.AnyZodObject> extends InferenceParamsBase {
@@ -61,7 +122,7 @@ export async function executeInference<T extends z.AnyZodObject>(   {
     messages,
     temperature,
     maxTokens,
-    retryLimit = 5, // Increased retry limit for better reliability
+    retryLimit = 5,
     stream,
     tools,
     reasoning_effort,
@@ -69,8 +130,9 @@ export async function executeInference<T extends z.AnyZodObject>(   {
     agentActionName,
     format,
     modelName,
-    modelConfig,
-    context
+    context,
+    onAssistantMessage,
+    completionConfig,
 }: InferenceParamsBase &    {
     schema?: T;
     format?: SchemaFormat;
@@ -90,13 +152,10 @@ export async function executeInference<T extends z.AnyZodObject>(   {
         }
     }
 
-    // Use the final config or fall back to AGENT_CONFIG defaults
-    const finalConf = conf || AGENT_CONFIG[agentActionName];
-
-    modelName = modelName || finalConf.name;
-    temperature = temperature || finalConf.temperature || 0.2;
-    maxTokens = maxTokens || finalConf.max_tokens || 16000;
-    reasoning_effort = reasoning_effort || finalConf.reasoning_effort;
+    modelName = modelName || resolvedConfig.name;
+    temperature = temperature ?? resolvedConfig.temperature ?? 0.2;
+    maxTokens = maxTokens || resolvedConfig.max_tokens || 16000;
+    reasoning_effort = reasoning_effort || resolvedConfig.reasoning_effort;
 
     // Exponential backoff for retries
     const backoffMs = (attempt: number) => Math.min(500 * Math.pow(2, attempt), 10000);
@@ -112,7 +171,7 @@ export async function executeInference<T extends z.AnyZodObject>(   {
 
             const result = schema ? await infer<T>({
                 env,
-                metadata: context,
+                metadata: context.metadata,
                 messages,
                 schema,
                 schemaName: agentActionName,
@@ -128,9 +187,12 @@ export async function executeInference<T extends z.AnyZodObject>(   {
                 reasoning_effort: useFallbackModel ? undefined : reasoning_effort,
                 temperature,
                 abortSignal: context.abortSignal,
+                onAssistantMessage,
+                completionConfig,
+                runtimeOverrides: context.runtimeOverrides,
             }) : await infer({
                 env,
-                metadata: context,
+                metadata: context.metadata,
                 messages,
                 maxTokens,
                 modelName: currentModel,
@@ -140,6 +202,9 @@ export async function executeInference<T extends z.AnyZodObject>(   {
                 reasoning_effort: useFallbackModel ? undefined : reasoning_effort,
                 temperature,
                 abortSignal: context.abortSignal,
+                onAssistantMessage,
+                completionConfig,
+                runtimeOverrides: context.runtimeOverrides,
             });
             logger.info(`Successfully completed ${agentActionName} operation`);
             // console.log(result);

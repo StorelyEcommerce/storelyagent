@@ -671,9 +671,6 @@ export type NewEmailVerificationToken = typeof emailVerificationTokens.$inferIns
 export type AuditLog = typeof auditLogs.$inferSelect;
 export type NewAuditLog = typeof auditLogs.$inferInsert;
 
-export type UserSecret = typeof userSecrets.$inferSelect;
-export type NewUserSecret = typeof userSecrets.$inferInsert;
-
 export type UserModelConfig = typeof userModelConfigs.$inferSelect;
 export type NewUserModelConfig = typeof userModelConfigs.$inferInsert;
 export type UserModelProvider = typeof userModelProviders.$inferSelect;

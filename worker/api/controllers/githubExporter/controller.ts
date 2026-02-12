@@ -5,6 +5,9 @@ import { GitHubExporterOAuthProvider } from '../../../services/oauth/github-expo
 import { getAgentStub } from '../../../agents';
 import { createLogger } from '../../../logger';
 import { AppService } from '../../../database/services/AppService';
+import { ExportResult } from 'worker/agents/core/types';
+import { SignJWT, jwtVerify, JWTPayload } from 'jose';
+import { validateRedirectUrl } from '../../../utils/authUtils';
 
 export interface GitHubExportData {
     success: boolean;
@@ -12,13 +15,12 @@ export interface GitHubExportData {
     error?: string;
 }
 
-interface GitHubOAuthCallbackState {
+interface GitHubExportStatePayload extends JWTPayload {
     userId: string;
-    timestamp: number;
     purpose: 'repository_export';
-    agentId?: string;
+    agentId: string;
     returnUrl: string;
-    exportData?: {
+    exportData: {
         repositoryName: string;
         description?: string;
         isPrivate?: boolean;
@@ -27,6 +29,28 @@ interface GitHubOAuthCallbackState {
 
 export class GitHubExporterController extends BaseController {
     static readonly logger = createLogger('GitHubExporterController');
+    private static readonly STATE_EXPIRY = '10m';
+
+    private static async signState(payload: Omit<GitHubExportStatePayload, 'iat' | 'exp'>, secret: string): Promise<string> {
+        return new SignJWT(payload)
+            .setProtectedHeader({ alg: 'HS256' })
+            .setIssuedAt()
+            .setExpirationTime(this.STATE_EXPIRY)
+            .sign(new TextEncoder().encode(secret));
+    }
+
+    private static async verifyState(token: string, secret: string): Promise<GitHubExportStatePayload | null> {
+        try {
+            const { payload } = await jwtVerify(
+                token,
+                new TextEncoder().encode(secret)
+            );
+            return payload as GitHubExportStatePayload;
+        } catch (error) {
+            this.logger.warn('State verification failed', { error });
+            return null;
+        }
+    }
 
     /**
      * Creates GitHub repository and pushes files from agent
@@ -164,13 +188,16 @@ export class GitHubExporterController extends BaseController {
             this.logger.info('Pushing files to repository', { agentId, repositoryUrl });
             
             const agentStub = await getAgentStub(env, agentId);
-            const pushResult = await agentStub.pushToGitHub({
-                cloneUrl,
-                repositoryHtmlUrl: repositoryUrl,
-                isPrivate,
-                token,
-                email: 'vibesdk-bot@cloudflare.com',
-                username
+            const pushResult: ExportResult = await agentStub.exportProject({
+                kind: 'github',
+                github: {
+                    cloneUrl,
+                    repositoryHtmlUrl: repositoryUrl,
+                    isPrivate,
+                    token,
+                    email: 'vibesdk-bot@cloudflare.com',
+                    username
+                }
             });
 
             if (!pushResult?.success) {
@@ -216,19 +243,17 @@ export class GitHubExporterController extends BaseController {
                 );
             }
 
-            let parsedState: GitHubOAuthCallbackState | null = null;
-            
-            if (stateParam) {
-                try {
-                    parsedState = JSON.parse(
-                        Buffer.from(stateParam, 'base64').toString(),
-                    ) as GitHubOAuthCallbackState;
-                } catch (error) {
-                    this.logger.error('Failed to parse OAuth state parameter', error);
-                }
+            if (!stateParam) {
+                return Response.redirect(
+                    `${new URL(request.url).origin}/settings?integration=github&status=error&reason=missing_state`,
+                    302,
+                );
             }
 
-            if (!parsedState || !parsedState.userId) {
+            const parsedState = await this.verifyState(stateParam, env.JWT_SECRET);
+
+            if (!parsedState) {
+                this.logger.warn('Invalid or expired OAuth state');
                 return Response.redirect(
                     `${new URL(request.url).origin}/settings?integration=github&status=error&reason=invalid_state`,
                     302,
@@ -236,6 +261,20 @@ export class GitHubExporterController extends BaseController {
             }
 
             const { userId, purpose, agentId, exportData, returnUrl } = parsedState;
+
+            if (!context.user || context.user.id !== userId) {
+                this.logger.warn('Session user mismatch in OAuth callback', {
+                    stateUserId: userId,
+                    sessionUserId: context.user?.id,
+                });
+                return Response.redirect(
+                    `${new URL(request.url).origin}/settings?integration=github&status=error&reason=session_mismatch`,
+                    302,
+                );
+            }
+
+            const validatedReturnUrl = validateRedirectUrl(returnUrl, request)
+                || `${new URL(request.url).origin}/chat`;
 
             const baseUrl = new URL(request.url).origin;
             const oauthProvider = GitHubExporterOAuthProvider.create(env, baseUrl);
@@ -246,7 +285,7 @@ export class GitHubExporterController extends BaseController {
                 this.logger.error('Failed to exchange OAuth code', { userId });
                 
                 return Response.redirect(
-                    `${returnUrl}?github_export=error&reason=token_exchange_failed`,
+                    `${validatedReturnUrl}?github_export=error&reason=token_exchange_failed`,
                     302,
                 );
             }
@@ -256,7 +295,17 @@ export class GitHubExporterController extends BaseController {
                 purpose
             });
 
-            if (purpose === 'repository_export' && exportData && agentId) {
+            if (purpose === 'repository_export') {
+                const appService = new AppService(env);
+                const ownershipResult = await appService.checkAppOwnership(agentId, userId);
+                if (!ownershipResult.isOwner) {
+                    this.logger.warn('OAuth callback ownership check failed', { userId, agentId });
+                    return Response.redirect(
+                        `${validatedReturnUrl}?github_export=error&reason=${encodeURIComponent('You do not have permission to export this app')}`,
+                        302,
+                    );
+                }
+
                 const result = await this.createRepositoryAndPush({
                     env,
                     agentId,
@@ -269,7 +318,7 @@ export class GitHubExporterController extends BaseController {
 
                 if (!result.success) {
                     return Response.redirect(
-                        `${returnUrl}?github_export=error&reason=${encodeURIComponent(result.error)}`,
+                        `${validatedReturnUrl}?github_export=error&reason=${encodeURIComponent(result.error)}`,
                         302,
                     );
                 }
@@ -277,13 +326,13 @@ export class GitHubExporterController extends BaseController {
                 this.logger.info('OAuth export completed', { userId, agentId, repositoryUrl: result.repositoryUrl });
 
                 return Response.redirect(
-                    `${returnUrl}?github_export=success&repository_url=${encodeURIComponent(result.repositoryUrl)}`,
+                    `${validatedReturnUrl}?github_export=success&repository_url=${encodeURIComponent(result.repositoryUrl)}`,
                     302,
                 );
             }
 
             return Response.redirect(
-                `${returnUrl}?integration=github&status=oauth_success`,
+                `${validatedReturnUrl}?integration=github&status=oauth_success`,
                 302,
             );
         } catch (error) {
@@ -315,6 +364,15 @@ export class GitHubExporterController extends BaseController {
                 isPrivate?: boolean;
                 agentId: string;
             };
+
+            const appService = new AppService(env);
+            const ownershipResult = await appService.checkAppOwnership(body.agentId, context.user.id);
+            if (!ownershipResult.isOwner) {
+                return GitHubExporterController.createErrorResponse<never>(
+                    'You do not have permission to access this app',
+                    403
+                );
+            }
 
             this.logger.info('Export initiated', { userId: context.user.id, agentId: body.agentId });
 
@@ -372,9 +430,12 @@ export class GitHubExporterController extends BaseController {
                 this.logger.info('No cached token, initiating OAuth', { agentId: body.agentId });
             }
 
-            const state: GitHubOAuthCallbackState = {
+            const baseUrl = new URL(request.url).origin;
+            const rawReturnUrl = request.headers.get('referer') || `${baseUrl}/chat`;
+            const validatedReturnUrl = validateRedirectUrl(rawReturnUrl, request) || `${baseUrl}/chat`;
+
+            const statePayload: Omit<GitHubExportStatePayload, 'iat' | 'exp'> = {
                 userId: context.user.id,
-                timestamp: Date.now(),
                 purpose: 'repository_export',
                 agentId: body.agentId,
                 exportData: {
@@ -382,15 +443,13 @@ export class GitHubExporterController extends BaseController {
                     description: body.description,
                     isPrivate: body.isPrivate
                 },
-                returnUrl: request.headers.get('referer') || `${new URL(request.url).origin}/chat`,
+                returnUrl: validatedReturnUrl,
             };
 
-            const baseUrl = new URL(request.url).origin;
+            const signedState = await this.signState(statePayload, env.JWT_SECRET);
             const oauthProvider = GitHubExporterOAuthProvider.create(env, baseUrl);
 
-            const authUrl = await oauthProvider.getAuthorizationUrl(
-                Buffer.from(JSON.stringify(state)).toString('base64')
-            );
+            const authUrl = await oauthProvider.getAuthorizationUrl(signedState);
 
             this.logger.info('Initiating OAuth flow', { userId: context.user.id, agentId: body.agentId });
 
@@ -429,6 +488,15 @@ export class GitHubExporterController extends BaseController {
                 return GitHubExporterController.createErrorResponse<never>(
                     'Repository URL and agent ID are required',
                     400
+                );
+            }
+
+            const appService = new AppService(env);
+            const ownershipResult = await appService.checkAppOwnership(body.agentId, context.user.id);
+            if (!ownershipResult.isOwner) {
+                return GitHubExporterController.createErrorResponse<never>(
+                    'You do not have permission to access this app',
+                    403
                 );
             }
 

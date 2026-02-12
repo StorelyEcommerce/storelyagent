@@ -28,12 +28,15 @@ import {
     GetLogsResponse,
     ListInstancesResponse,
     TemplateDetails,
+    TemplateInfo,
+    InstanceCreationRequest,
 } from './sandboxTypes';
 
 import { createObjectLogger, StructuredLogger } from '../../logger';
 import { env } from 'cloudflare:workers'
 import { ZipExtractor } from './zipExtractor';
 import { FileTreeBuilder } from './fileTreeBuilder';
+import { DeploymentTarget } from 'worker/agents/core/types';
 
 /**
  * Streaming event for enhanced command execution
@@ -115,7 +118,11 @@ export abstract class BaseSandboxService {
                     name: t.name,
                     language: t.language,
                     frameworks: t.frameworks || [],
-                    description: t.description
+                    description: t.description,
+                    disabled: t.disabled ?? false,
+                    projectType: t.projectType || 'app',
+                    renderMode: t.renderMode,
+                    slideDirectory: t.slideDirectory,
                 })),
                 count: filteredTemplates.length
             };
@@ -225,6 +232,7 @@ export abstract class BaseSandboxService {
                     selection: catalogInfo?.description.selection || '',
                     usage: catalogInfo?.description.usage || ''
                 },
+                disabled: catalogInfo?.disabled ?? false,
                 fileTree,
                 allFiles: filesMap,
                 language: catalogInfo?.language,
@@ -272,8 +280,11 @@ export abstract class BaseSandboxService {
     /**
      * Create a new instance from a template
      * Returns: { success: boolean, instanceId?: string, error?: string }
+     * @param options - Instance creation options
      */
-    abstract createInstance(templateName: string, projectName: string, webhookUrl?: string, localEnvVars?: Record<string, string>): Promise<BootstrapResponse>;
+    abstract createInstance(
+        options: InstanceCreationRequest
+    ): Promise<BootstrapResponse>;
 
     /**
      * List all instances across all sessions

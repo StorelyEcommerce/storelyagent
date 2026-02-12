@@ -3,7 +3,7 @@ import { IFileManager } from '../interfaces/IFileManager';
 import { IStateManager } from '../interfaces/IStateManager';
 import { FileOutputType } from '../../schemas';
 import { FileProcessing } from '../../domain/pure/FileProcessing';
-import { FileState } from 'worker/agents/core/state';
+import { BaseProjectState, FileState } from 'worker/agents/core/state';
 import { TemplateDetails } from '../../../services/sandbox/sandboxTypes';
 import { GitVersionControl } from 'worker/agents/git';
 import { isBackendReadOnlyFile } from 'worker/services/sandbox/utils';
@@ -15,7 +15,7 @@ import { dumpFilesToLocal, logFileDumpLocation } from '../../utils/fileDump';
  */
 export class FileManager implements IFileManager {
     constructor(
-        private stateManager: IStateManager,
+        private stateManager: IStateManager<BaseProjectState>,
         private getTemplateDetailsFunc: () => TemplateDetails,
         private git: GitVersionControl
     ) {
@@ -29,7 +29,7 @@ export class FileManager implements IFileManager {
      * Sync generatedFilesMap from git HEAD
      * TODO: Remove in the future by making git fs the single source of truth
      */
-    private async syncGeneratedFilesMapFromGit(): Promise<void> {
+    async syncGeneratedFilesMapFromGit(): Promise<void> {
         console.log('[FileManager] Auto-syncing generatedFilesMap from git HEAD');
 
         try {
@@ -69,7 +69,7 @@ export class FileManager implements IFileManager {
         }
     }
 
-    getGeneratedFile(path: string): FileOutputType | null {
+    getGeneratedFile(path: string): FileState | null {
         const state = this.stateManager.getState();
         return state.generatedFilesMap[path] || null;
     }
@@ -79,22 +79,30 @@ export class FileManager implements IFileManager {
      * Template files are overridden by generated files with same path
      * @returns Array of all files. Only returns important template files, not all!
      */
-    getAllRelevantFiles(): FileOutputType[] {
+    getAllRelevantFiles(): FileState[] {
         const state = this.stateManager.getState();
         return FileProcessing.getAllRelevantFiles(this.getTemplateDetailsFunc(), state.generatedFilesMap);
     }
 
-    getAllFiles(): FileOutputType[] {
+    getAllFiles(): FileState[] {
         const state = this.stateManager.getState();
         return FileProcessing.getAllFiles(this.getTemplateDetailsFunc(), state.generatedFilesMap);
     }
 
-    async saveGeneratedFile(file: FileOutputType, commitMessage?: string): Promise<FileState> {
-        const results = await this.saveGeneratedFiles([file], commitMessage);
+    async saveGeneratedFile(file: FileOutputType, commitMessage?: string, overwrite: boolean = false): Promise<FileState> {
+        const results = await this.saveGeneratedFiles([file], commitMessage, overwrite);
         return results[0];
     }
 
-    async saveGeneratedFiles(files: FileOutputType[], commitMessage?: string): Promise<FileState[]> {
+    /**
+     * Record file changes to state (synchronous).
+     * Updates generatedFilesMap and computes diffs, but does NOT touch git.
+     * Use commitFiles() to persist recorded files to git.
+     */
+    recordFileChanges(files: FileOutputType[], overwrite: boolean = false): FileState[] {
+        const templateDetails = this.getTemplateDetailsFunc();
+        const dontTouchFiles = templateDetails?.dontTouchFiles || new Set<string>();
+
         const filesMap = { ...this.stateManager.getState().generatedFilesMap };
         const fileStates: FileState[] = [];
 
@@ -144,19 +152,30 @@ export class FileManager implements IFileManager {
             generatedFilesMap: filesMap
         });
 
+        return fileStates;
+    }
+
+    /**
+     * Save and optionally commit files to git.
+     * - With files: records them to state, then commits if commitMessage provided
+     * - With empty array + commitMessage: commits ALL pending changes from state
+     */
+    async saveGeneratedFiles(files: FileOutputType[], commitMessage?: string, overwrite: boolean = false): Promise<FileState[]> {
+        // Empty array + commit message = commit all pending changes
+        const fileStates = files.length === 0
+            ? Object.values(this.stateManager.getState().generatedFilesMap)
+            : this.recordFileChanges(files, overwrite);
+
         try {
-            const shouldCommit = fileStates.length > 0 && fileStates.some(fileState => fileState.lastDiff !== '');
-            if (shouldCommit) {
-                // If commit message is available, commit, else stage
-                if (commitMessage) {
-                    console.log(`[FileManager] Committing ${fileStates.length} files:`, commitMessage);
-                    await this.git.commit(fileStates, commitMessage);
-                    console.log(`[FileManager] Commit successful`);
-                } else {
-                    console.log(`[FileManager] Staging ${fileStates.length} files`);
-                    await this.git.stage(fileStates);
-                    console.log(`[FileManager] Stage successful`);
-                }
+            if (commitMessage) {
+                const unescapedMessage = commitMessage.replace(/\\n/g, '\n').replace(/\\t/g, '\t');
+                console.log(`[FileManager] Committing ${fileStates.length} files:`, unescapedMessage);
+                await this.git.commit(fileStates, unescapedMessage);
+                console.log(`[FileManager] Commit successful`);
+            } else if (fileStates.length > 0 && fileStates.some(f => f.lastDiff !== '')) {
+                console.log(`[FileManager] Staging ${fileStates.length} files`);
+                await this.git.stage(fileStates);
+                console.log(`[FileManager] Stage successful`);
             }
         } catch (error) {
             console.error(`[FileManager] Failed to commit files:`, error, commitMessage);
@@ -178,7 +197,7 @@ export class FileManager implements IFileManager {
     }
 
     fileExists(path: string): boolean {
-        return !!this.getGeneratedFile(path)
+        return !!this.getFile(path)
     }
 
     getGeneratedFilePaths(): string[] {
@@ -186,12 +205,12 @@ export class FileManager implements IFileManager {
         return Object.keys(state.generatedFilesMap);
     }
 
-    getGeneratedFilesMap(): Record<string, FileOutputType> {
+    getGeneratedFilesMap(): Record<string, FileState> {
         const state = this.stateManager.getState();
         return state.generatedFilesMap;
     }
 
-    getGeneratedFiles(): FileOutputType[] {
+    getGeneratedFiles(): FileState[] {
         const state = this.stateManager.getState();
         return Object.values(state.generatedFilesMap);
     }

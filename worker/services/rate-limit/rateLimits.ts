@@ -1,12 +1,13 @@
-import { RateLimitType, RateLimitStore, RateLimitSettings, DORateLimitConfig, KVRateLimitConfig, DEFAULT_RATE_INCREMENTS_FOR_MODELS } from './config';
+import { RateLimitType, RateLimitStore, RateLimitSettings, DORateLimitConfig, KVRateLimitConfig } from './config';
 import { createObjectLogger } from '../../logger';
 import { AuthUser } from '../../types/auth-types';
 import { extractTokenWithMetadata, extractRequestMetadata } from '../../utils/authUtils';
 import { captureSecurityEvent } from '../../observability/sentry';
 import { KVRateLimitStore } from './KVRateLimitStore';
+import { RateLimitResult } from './DORateLimitStore';
 import { RateLimitExceededError, SecurityError } from 'shared/types/errors';
 import { isDev } from 'worker/utils/envs';
-import { AIModels } from 'worker/agents/inferutils/config.types';
+import { AI_MODEL_CONFIG, AIModels } from 'worker/agents/inferutils/config.types';
 
 export class RateLimitService {
     static logger = createObjectLogger(this, 'RateLimitService');
@@ -53,7 +54,7 @@ export class RateLimitService {
         key: string,
         config: DORateLimitConfig,
         incrementBy: number = 1
-    ): Promise<boolean> {
+    ): Promise<RateLimitResult> {
         try {
             const stub = env.DORateLimitStore.getByName(key);
 
@@ -66,13 +67,13 @@ export class RateLimitService {
                 dailyLimit: config.dailyLimit
             }, incrementBy);
 
-            return result.success;
+            return result;
         } catch (error) {
             this.logger.error('Failed to enforce DO rate limit', {
                 key,
                 error: error instanceof Error ? error.message : 'Unknown error'
             });
-            return true; // Fail open
+            return { success: true }; // Fail open
         }
     }
     
@@ -82,32 +83,26 @@ export class RateLimitService {
         config: RateLimitSettings,
         limitType: RateLimitType,
         incrementBy: number = 1
-    ) : Promise<boolean> {
+    ) : Promise<RateLimitResult> {
         // If dev, don't enforce
         if (isDev(env)) {
-            return true;
+            return { success: true };
         }
         const rateLimitConfig = config[limitType];
-        let success = false;
-        
+
         switch (rateLimitConfig.store) {
             case RateLimitStore.RATE_LIMITER: {
                 const result = await (env[rateLimitConfig.bindingName as keyof Env] as RateLimit).limit({ key });
-                success = result.success;
-                break;
+                return { success: result.success };
             }
             case RateLimitStore.KV: {
-                const result = await KVRateLimitStore.increment(env.VibecoderStore, key, rateLimitConfig as KVRateLimitConfig, incrementBy);
-                success = result.success;
-                break;
+                return await KVRateLimitStore.increment(env.VibecoderStore, key, rateLimitConfig as KVRateLimitConfig, incrementBy);
             }
             case RateLimitStore.DURABLE_OBJECT:
-                success = await this.enforceDORateLimit(env, key, rateLimitConfig as DORateLimitConfig, incrementBy);
-                break;
+                return await this.enforceDORateLimit(env, key, rateLimitConfig as DORateLimitConfig, incrementBy);
             default:
-                return false;
+                return { success: false };
         }
-        return success;
     }
 
     static async enforceGlobalApiRateLimit(
@@ -124,8 +119,8 @@ export class RateLimitService {
         const key = this.buildRateLimitKey(RateLimitType.API_RATE_LIMIT, identifier);
         
         try {
-            const success = await this.enforce(env, key, config, RateLimitType.API_RATE_LIMIT);
-            if (!success) {
+            const result = await this.enforce(env, key, config, RateLimitType.API_RATE_LIMIT);
+            if (!result.success) {
                 this.logger.warn('Global API rate limit exceeded', {
                     identifier,
                     key,
@@ -164,8 +159,8 @@ export class RateLimitService {
         const key = this.buildRateLimitKey(RateLimitType.AUTH_RATE_LIMIT, identifier);
         
         try {
-            const success = await this.enforce(env, key, config, RateLimitType.AUTH_RATE_LIMIT);
-            if (!success) {
+            const result = await this.enforce(env, key, config, RateLimitType.AUTH_RATE_LIMIT);
+            if (!result.success) {
                 this.logger.warn('Auth rate limit exceeded', {
                     identifier,
                     key,
@@ -203,11 +198,13 @@ export class RateLimitService {
 		const key = this.buildRateLimitKey(RateLimitType.APP_CREATION, identifier);
 		
 		try {
-            const success = await this.enforce(env, key, config, RateLimitType.APP_CREATION);
-			if (!success) {
+            const result = await this.enforce(env, key, config, RateLimitType.APP_CREATION);
+			if (!result.success) {
 				this.logger.warn('App creation rate limit exceeded', {
 					identifier,
 					key,
+					exceededLimit: result.exceededLimit,
+					limitValue: result.limitValue,
 					userAgent: request.headers.get('User-Agent'),
 					ip: request.headers.get('CF-Connecting-IP')
 				});
@@ -215,15 +212,25 @@ export class RateLimitService {
 					limitType: RateLimitType.APP_CREATION,
 					identifier,
 					key,
+					exceededLimit: result.exceededLimit,
 					userAgent: request.headers.get('User-Agent') || undefined,
 					ip: request.headers.get('CF-Connecting-IP') || undefined,
 				});
+
+				// Build error message based on which limit was exceeded
+				const limitValue = result.limitValue ?? config.appCreation.limit;
+				const periodSeconds = result.periodSeconds ?? config.appCreation.period;
+				const periodHours = periodSeconds / 3600;
+				const periodLabel = result.exceededLimit === 'daily'
+					? 'day'
+					: `${periodHours} hour${periodHours >= 2 ? 's' : ''}`;
+
 				throw new RateLimitExceededError(
-					`App creation rate limit exceeded. Maximum ${config.appCreation.limit} apps per ${config.appCreation.period / 3600} hour${config.appCreation.period >= 7200 ? 's' : ''}`,
+					`App creation rate limit exceeded. Maximum ${limitValue} apps per ${periodLabel}`,
 					RateLimitType.APP_CREATION,
-					config.appCreation.limit,
-					config.appCreation.period,
-                    ['Please try again in an hour when the limit resets for you.']
+					limitValue,
+					periodSeconds,
+                    ['Please try again later when the limit resets for you.']
 				);
 			}
 		} catch (error) {
@@ -251,16 +258,17 @@ export class RateLimitService {
 		const key = this.buildRateLimitKey(RateLimitType.LLM_CALLS, `${identifier}${suffix}`);
 		
 		try {
-            let incrementBy = 1;
-            if (DEFAULT_RATE_INCREMENTS_FOR_MODELS[model]) {
-                incrementBy = DEFAULT_RATE_INCREMENTS_FOR_MODELS[model];
-            }
-			const success = await this.enforce(env, key, config, RateLimitType.LLM_CALLS, incrementBy);
-			if (!success) {
+            // Increment by model's credit cost
+            const modelConfig = AI_MODEL_CONFIG[model as AIModels];
+            const incrementBy = modelConfig.creditCost;
+
+			const result = await this.enforce(env, key, config, RateLimitType.LLM_CALLS, incrementBy);
+			if (!result.success) {
 				this.logger.warn('LLM calls rate limit exceeded', {
 					identifier,
 					key,
-                    config,
+					exceededLimit: result.exceededLimit,
+					limitValue: result.limitValue,
                     model,
                     incrementBy
 				});
@@ -268,15 +276,25 @@ export class RateLimitService {
 					limitType: RateLimitType.LLM_CALLS,
 					identifier,
 					key,
+					exceededLimit: result.exceededLimit,
                     model,
                     incrementBy
 				});
+
+				// Build error message based on which limit was exceeded
+				const limitValue = result.limitValue ?? config.llmCalls.limit;
+				const periodSeconds = result.periodSeconds ?? config.llmCalls.period;
+				const periodHours = periodSeconds / 3600;
+				const periodLabel = result.exceededLimit === 'daily'
+					? 'day'
+					: `${periodHours} hour${periodHours >= 2 ? 's' : ''}`;
+
 				throw new RateLimitExceededError(
-					`AI inference rate limit exceeded. Consider using lighter models. Maximum ${config.llmCalls.limit} credits per ${config.llmCalls.period / 3600} hour${config.llmCalls.period >= 7200 ? 's' : ''} or ${config.llmCalls.dailyLimit} credits per day. Gemini pro models cost ${DEFAULT_RATE_INCREMENTS_FOR_MODELS[AIModels.GEMINI_2_5_PRO]} credits per call, flash models cost ${DEFAULT_RATE_INCREMENTS_FOR_MODELS[AIModels.GEMINI_2_5_FLASH]} credits per call, and flash lite models cost ${DEFAULT_RATE_INCREMENTS_FOR_MODELS[AIModels.GEMINI_2_5_FLASH_LITE]} credit per call.`,
+					`AI inference rate limit exceeded. Consider using lighter models. Maximum ${limitValue} credits per ${periodLabel}.`,
 					RateLimitType.LLM_CALLS,
-					config.llmCalls.limit,
-					config.llmCalls.period,
-                    [`Please try again in due time when the limit resets for you. Consider using lighter models. Gemini pro models cost ${DEFAULT_RATE_INCREMENTS_FOR_MODELS[AIModels.GEMINI_2_5_PRO]} credits per call, flash models cost ${DEFAULT_RATE_INCREMENTS_FOR_MODELS[AIModels.GEMINI_2_5_FLASH]} credits per call, and flash lite models cost ${DEFAULT_RATE_INCREMENTS_FOR_MODELS[AIModels.GEMINI_2_5_FLASH_LITE]} credit per call.`]
+					limitValue,
+					periodSeconds,
+                    [`Please try again later when the limit resets for you. The current model costs ${incrementBy} credits per call. Please go to settings to change your default model.`]
 				);
 			}
 		} catch (error) {

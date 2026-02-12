@@ -38,9 +38,6 @@ import type {
 	CreateProviderRequest,
 	UpdateProviderRequest,
 	TestProviderRequest,
-	SecretsData,
-	SecretStoreData,
-	SecretDeleteData,
 	SecretTemplatesData,
 	StripeConnectStatusData,
 	StripeConnectInitiateData,
@@ -430,6 +427,17 @@ class ApiClient {
 	}
 
 	// ===============================
+	// Platform Capabilities API Methods
+	// ===============================
+
+	/**
+	 * Get platform capabilities including available features
+	 */
+	async getCapabilities(noToast: boolean = true): Promise<ApiResponse<CapabilitiesData>> {
+		return this.request<CapabilitiesData>('/api/capabilities', undefined, noToast);
+	}
+
+	// ===============================
 	// Apps API Methods
 	// ===============================
 
@@ -707,11 +715,14 @@ class ApiClient {
 
 	/**
 	 * Get BYOK providers and available models
+	 * @param agentAction - Optional agent action to filter models by constraints
 	 */
-	async getByokProviders(): Promise<ApiResponse<ByokProvidersData>> {
-		return this.request<ByokProvidersData>(
-			'/api/model-configs/byok-providers',
-		);
+	async getByokProviders(agentAction?: string): Promise<ApiResponse<ByokProvidersData>> {
+		const endpoint = agentAction
+			? `/api/model-configs/byok-providers?agentAction=${encodeURIComponent(agentAction)}`
+			: '/api/model-configs/byok-providers';
+
+		return this.request<ByokProvidersData>(endpoint);
 	}
 
 	/**
@@ -896,37 +907,44 @@ class ApiClient {
 	// ===============================
 
 	/**
-	 * Get all user secrets including inactive ones
+	 * Get secret templates for BYOK providers
 	 */
-	async getAllSecrets(): Promise<ApiResponse<SecretsData>> {
-		return this.request<SecretsData>('/api/secrets');
+	async getSecretTemplates(): Promise<ApiResponse<SecretTemplatesData>> {
+		return this.request<SecretTemplatesData>('/api/secrets/templates');
 	}
 
-	/**
-	 * Store a new secret
-	 */
-	async storeSecret(data: {
-		templateId?: string;
-		name?: string;
-		envVarName?: string;
-		value: string;
-		environment?: string;
-		description?: string;
-	}): Promise<ApiResponse<SecretStoreData>> {
-		return this.request<SecretStoreData>('/api/secrets', {
+	// ===============================
+	// Vault API Methods
+	// ===============================
+
+	async getVaultStatus(): Promise<ApiResponse<VaultStatusResponse>> {
+		return this.request<VaultStatusResponse>('/api/vault/status');
+	}
+
+	async getVaultConfig(): Promise<ApiResponse<{ config: VaultConfigResponse }>> {
+		return this.request<{ config: VaultConfigResponse }>('/api/vault/config');
+	}
+
+	async setupVault(data: {
+		kdfAlgorithm: 'argon2id' | 'webauthn-prf';
+		kdfSalt: string;
+		kdfParams?: { time: number; mem: number; parallelism: number };
+		prfCredentialId?: string;
+		prfSalt?: string;
+		encryptedRecoveryCodes?: string;
+		recoveryCodesNonce?: string;
+		verificationBlob: string;
+		verificationNonce: string;
+	}): Promise<ApiResponse<{ success: boolean }>> {
+		return this.request<{ success: boolean }>('/api/vault/setup', {
 			method: 'POST',
 			body: data,
 		});
 	}
 
-	/**
-	 * Delete a secret
-	 */
-	async deleteSecret(
-		secretId: string,
-	): Promise<ApiResponse<SecretDeleteData>> {
-		return this.request<SecretDeleteData>(`/api/secrets/${secretId}`, {
-			method: 'DELETE',
+	async resetVault(): Promise<ApiResponse<{ success: boolean }>> {
+		return this.request<{ success: boolean }>('/api/vault/reset', {
+			method: 'POST',
 		});
 	}
 

@@ -1,13 +1,14 @@
 import { WebSocketMessageResponses } from '../../../agents/constants';
 import { BaseController } from '../baseController';
 import { generateId } from '../../../utils/idGenerator';
-import { CodeGenState } from '../../../agents/core/state';
+import { AgentState } from '../../../agents/core/state';
+import { BehaviorType, ProjectType } from '../../../agents/core/types';
 import { getAgentStub, getTemplateForQuery } from '../../../agents';
 import { AgentConnectionData, AgentPreviewResponse, AgentCloudflareDeployResponse, CodeGenArgs } from './types';
 import { ApiResponse, ControllerResponse } from '../types';
 import { RouteContext } from '../../types/route-context';
-import { ModelConfigService } from '../../../database';
-import { ModelConfig } from '../../../agents/inferutils/config.types';
+import { AppService, ModelConfigService } from '../../../database';
+import { ModelConfig, credentialsToRuntimeOverrides } from '../../../agents/inferutils/config.types';
 import { RateLimitService } from '../../../services/rate-limit/rateLimits';
 import { validateWebSocketOrigin } from '../../../middleware/security/websocket';
 import { createLogger } from '../../../logger';
@@ -22,12 +23,22 @@ import { AppService } from '../../../database';
 import type { Blueprint } from '../../../agents/schemas';
 import type { SmartCodeGeneratorAgent } from '../../../agents/core/smartGeneratorAgent';
 
-const defaultCodeGenArgs: CodeGenArgs = {
-    query: '',
+const defaultCodeGenArgs: Partial<CodeGenArgs> = {
     language: 'typescript',
     frameworks: ['react', 'vite'],
     selectedTemplate: 'auto',
-    agentMode: 'deterministic',
+};
+
+const resolveBehaviorType = (body: CodeGenArgs): BehaviorType => {
+    if (body.behaviorType) return body.behaviorType;
+    const pt = body.projectType;
+    if (pt === 'presentation' || pt === 'workflow' || pt === 'general') return 'agentic';
+    // default (including 'app' and when projectType omitted)
+    return 'phasic';
+};
+
+const resolveProjectType = (body: CodeGenArgs): ProjectType | 'auto' => {
+    return body.projectType || 'auto';
 };
 
 
@@ -54,8 +65,18 @@ export class CodingAgentController extends BaseController {
             }
 
             const query = body.query;
-            if (!query) {
+            if (typeof query !== 'string' || query.trim().length === 0) {
                 return CodingAgentController.createErrorResponse('Missing "query" field in request body', 400);
+            }
+            if (query.length > MAX_AGENT_QUERY_LENGTH) {
+                return CodingAgentController.createErrorResponse(
+                    new SecurityError(
+                        SecurityErrorType.INVALID_INPUT,
+                        `Prompt too large (${query.length} characters). Maximum allowed is ${MAX_AGENT_QUERY_LENGTH} characters.`,
+                        413,
+                    ),
+                    413,
+                );
             }
             const { readable, writable } = new TransformStream({
                 transform(chunk, controller) {
@@ -119,21 +140,20 @@ export class CodingAgentController extends BaseController {
             const userModelConfigs = new Map();
             for (const [actionKey, mergedConfig] of Object.entries(userConfigsRecord)) {
                 if (mergedConfig.isUserOverride) {
-                    const modelConfig: ModelConfig = {
-                        name: mergedConfig.name,
-                        max_tokens: mergedConfig.max_tokens,
-                        temperature: mergedConfig.temperature,
-                        reasoning_effort: mergedConfig.reasoning_effort,
-                        fallbackModel: mergedConfig.fallbackModel
-                    };
-                    userModelConfigs.set(actionKey, modelConfig);
+                    const { isUserOverride, userConfigId, ...modelConfig } = mergedConfig;
+                    userModelConfigs[actionKey] = modelConfig;
                 }
             }
 
+            const runtimeOverrides = credentialsToRuntimeOverrides(body.credentials);
+
             const inferenceContext = {
-                userModelConfigs: Object.fromEntries(userModelConfigs),
-                agentId: agentId,
-                userId: user.id,
+                metadata: {
+                    agentId: agentId,
+                    userId: user.id,
+                },
+                userModelConfigs,
+                runtimeOverrides,
                 enableRealtimeCodeFix: false, // This costs us too much, so disabled it for now
                 enableFastSmartCodeFix: false,
             }
@@ -141,6 +161,7 @@ export class CodingAgentController extends BaseController {
             this.logger.info(`Initialized inference context for user ${user.id}`, {
                 modelConfigsCount: Object.keys(userModelConfigs).length,
             });
+            this.logger.info(`Creating project of type: ${projectType}`);
 
             const websocketUrl = `${url.protocol === 'https:' ? 'wss:' : 'ws:'}//${url.host}/api/agent/${agentId}/ws`;
             const httpStatusUrl = `${url.origin}/api/agent/${agentId}`;
@@ -183,11 +204,14 @@ export class CodingAgentController extends BaseController {
                 agentId: agentId,
                 websocketUrl,
                 httpStatusUrl,
+                behaviorType,
+                projectType: finalProjectType,
                 template: {
                     name: templateDetails.name,
                     files: getTemplateImportantFiles(templateDetails),
                 }
             });
+            const agentInstance = await getAgentStub(env, agentId, { behaviorType, projectType: finalProjectType });
 
             // Prepare initialization args with template info
             const initArgs = {
@@ -251,6 +275,10 @@ export class CodingAgentController extends BaseController {
     /**
      * Handle WebSocket connections for code generation
      * This routes the WebSocket connection directly to the Agent
+     * 
+     * Supports two authentication methods:
+     * 1. Ticket-based auth (SDK): ?ticket=tk_xxx in URL
+     * 2. JWT-based auth (Browser): Cookie/Header with origin validation
      */
     static async handleWebSocketConnection(
         request: Request,
@@ -259,8 +287,8 @@ export class CodingAgentController extends BaseController {
         context: RouteContext
     ): Promise<Response> {
         try {
-            const chatId = context.pathParams.agentId; // URL param is still agentId for backward compatibility
-            if (!chatId) {
+            const agentId = context.pathParams.agentId;
+            if (!agentId) {
                 return CodingAgentController.createErrorResponse('Missing agent ID parameter', 400);
             }
 
@@ -302,9 +330,8 @@ export class CodingAgentController extends BaseController {
                 // Let the agent handle the WebSocket connection directly
                 return agentInstance.fetch(request);
             } catch (error) {
-                this.logger.error(`Failed to get agent instance with ID ${chatId}:`, error);
+                this.logger.error(`Failed to get agent instance with ID ${agentId}:`, error);
                 // Return an appropriate WebSocket error response
-                // We need to emulate a WebSocket response even for errors
                 const { 0: client, 1: server } = new WebSocketPair();
 
                 server.accept();
@@ -529,6 +556,21 @@ export class CodingAgentController extends BaseController {
                 return CodingAgentController.createErrorResponse<AgentPreviewResponse>('Missing agent ID parameter', 400);
             }
 
+            const appService = new AppService(env);
+            const appResult = await appService.getAppDetails(agentId);
+
+            if (!appResult) {
+                return CodingAgentController.createErrorResponse<AgentPreviewResponse>('App not found', 404);
+            }
+
+            // Check if app is public
+            if(appResult.visibility !== 'public') {
+                // If user is logged in and is the owner, allow preview deployment
+                const user = context.user;
+                if (!user || user.id !== appResult.userId) {
+                    return CodingAgentController.createErrorResponse<AgentPreviewResponse>('App is not public. Preview deployment is only available for public apps.', 403);
+                }
+            }
             this.logger.info(`Deploying preview for agent: ${agentId}`);
 
             try {

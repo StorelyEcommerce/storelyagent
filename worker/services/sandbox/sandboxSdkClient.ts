@@ -22,6 +22,8 @@ import {
     GetLogsResponse,
     ListInstancesResponse,
     StoredError,
+    TemplateFile,
+    InstanceCreationRequest,
 } from './sandboxTypes';
 
 import { createObjectLogger } from '../../logger';
@@ -40,15 +42,15 @@ import { generateId } from '../../utils/idGenerator';
 import { ResourceProvisioner } from './resourceProvisioner';
 import { TemplateParser } from './templateParser';
 import { ResourceProvisioningResult } from './types';
-import { getPreviewDomain } from '../../utils/urls';
+import { getPreviewDomain, migratePreviewUrl } from '../../utils/urls';
 import { isDev } from 'worker/utils/envs'
 import { FileTreeBuilder } from './fileTreeBuilder';
+import { DeploymentTarget } from 'worker/agents/core/types';
 // Export the Sandbox class in your Worker
 export { Sandbox as UserAppSandboxService, Sandbox as DeployerService } from "@cloudflare/sandbox";
 
 
 interface InstanceMetadata {
-    templateName: string;
     projectName: string;
     startTime: string;
     webhookUrl?: string;
@@ -230,24 +232,24 @@ export class SandboxSdkClient extends BaseSandboxService {
         }
     }
 
-    /** Write a binary file to the sandbox using small base64 chunks to avoid large control messages. */
-    private async writeBinaryFileViaBase64(targetPath: string, data: ArrayBuffer, bytesPerChunk: number = 16 * 1024): Promise<void> {
-        const dir = targetPath.includes('/') ? targetPath.slice(0, targetPath.lastIndexOf('/')) : '.';
-        // Ensure directory and clean target file
-        await this.safeSandboxExec(`mkdir -p '${dir}'`);
-        await this.safeSandboxExec(`rm -f '${targetPath}'`);
+    // /** Write a binary file to the sandbox using small base64 chunks to avoid large control messages. */
+    // private async writeBinaryFileViaBase64(targetPath: string, data: ArrayBuffer, bytesPerChunk: number = 16 * 1024): Promise<void> {
+    //     const dir = targetPath.includes('/') ? targetPath.slice(0, targetPath.lastIndexOf('/')) : '.';
+    //     // Ensure directory and clean target file
+    //     await this.safeSandboxExec(`mkdir -p '${dir}'`);
+    //     await this.safeSandboxExec(`rm -f '${targetPath}'`);
 
-        const buffer = new Uint8Array(data);
-        for (let i = 0; i < buffer.length; i += bytesPerChunk) {
-            const chunk = buffer.subarray(i, Math.min(i + bytesPerChunk, buffer.length));
-            const base64Chunk = btoa(String.fromCharCode(...chunk));
-            // Append decoded bytes into the target file inside the sandbox
-            const appendResult = await this.safeSandboxExec(`printf '%s' '${base64Chunk}' | base64 -d >> '${targetPath}'`);
-            if (appendResult.exitCode !== 0) {
-                throw new Error(`Failed to append to ${targetPath}: ${appendResult.stderr}`);
-            }
-        }
-    }
+    //     const buffer = new Uint8Array(data);
+    //     for (let i = 0; i < buffer.length; i += bytesPerChunk) {
+    //         const chunk = buffer.subarray(i, Math.min(i + bytesPerChunk, buffer.length));
+    //         const base64Chunk = btoa(String.fromCharCode(...chunk));
+    //         // Append decoded bytes into the target file inside the sandbox
+    //         const appendResult = await this.safeSandboxExec(`printf '%s' '${base64Chunk}' | base64 -d >> '${targetPath}'`);
+    //         if (appendResult.exitCode !== 0) {
+    //             throw new Error(`Failed to append to ${targetPath}: ${appendResult.stderr}`);
+    //         }
+    //     }
+    // }
 
     /**
      * Write multiple files efficiently using a single shell script
@@ -286,7 +288,7 @@ export class SandboxSdkClient extends BaseSandboxService {
             const base64 = base64Chunks.join('');
 
             scriptLines.push(
-                `mkdir -p "$(dirname "${path}")" && echo '${base64}' | base64 -d > "${path}" && echo "OK:${path}" || echo "FAIL:${path}"`
+                `mkdir -p "$(dirname "${filePath}")" && echo '${base64}' | base64 -d > "${filePath}" && echo "OK:${filePath}" || echo "FAIL:${filePath}"`
             );
         }
 
@@ -295,7 +297,7 @@ export class SandboxSdkClient extends BaseSandboxService {
 
         try {
             // Write script (1 request)
-            const writeResult = await session.writeFile(scriptPath, script);
+            const writeResult = await session.writeFile(scriptPath, script);    // TODO: Checksum integrity verification
             if (!writeResult.success) {
                 throw new Error('Failed to write batch script');
             }
@@ -337,11 +339,47 @@ export class SandboxSdkClient extends BaseSandboxService {
 
         } catch (error) {
             this.logger.error('Batch write failed', error);
-            return files.map(({ path }) => ({
-                file: path,
+            return files.map(({ filePath }) => ({
+                file: filePath,
                 success: false,
                 error: error instanceof Error ? error.message : 'Unknown error'
             }));
+        }
+    }
+
+    async writeFilesBulk(instanceId: string, files: TemplateFile[]): Promise<WriteFilesResponse> {
+        try {
+            const session = await this.getInstanceSession(instanceId);
+            // Use batch script for efficient writing (3 requests for any number of files)
+            const filesToWrite = files.map(file => ({
+                filePath: `/workspace/${instanceId}/${file.filePath}`,
+                fileContents: file.fileContents
+            }));
+            
+            const writeResults = await this.writeFilesViaScript(filesToWrite, session);
+            
+            // Map results back to original format
+            const results: WriteFilesResponse['results'] = [];
+            for (const writeResult of writeResults) {
+                results.push({
+                    file: writeResult.file.replace(`/workspace/${instanceId}/`, ''),
+                    success: writeResult.success,
+                    error: writeResult.error
+                });
+            }
+
+            return {
+                success: true,
+                results,
+                message: 'Files written successfully'
+            };
+        } catch (error) {
+            this.logger.error('writeFiles', error, { instanceId });
+            return {
+                success: false,
+                results: files.map(f => ({ file: f.filePath, success: false, error: 'Instance error' })),
+                message: 'Failed to write files'
+            };
         }
     }
 
@@ -537,12 +575,11 @@ export class SandboxSdkClient extends BaseSandboxService {
                     // Create lightweight instance details from metadata
                     const instanceDetails: InstanceDetails = {
                         runId: instanceId,
-                        templateName: metadata.templateName,
                         startTime: new Date(metadata.startTime),
                         uptime: Math.floor((Date.now() - new Date(metadata.startTime).getTime()) / 1000),
                         directory: instanceId,
                         serviceDirectory: instanceId,
-                        previewURL: metadata.previewURL,
+                        previewURL: migratePreviewUrl(metadata.previewURL, env),
                         processId: metadata.processId,
                         tunnelURL: metadata.tunnelURL,
                         // Skip file tree
@@ -1546,8 +1583,8 @@ export class SandboxSdkClient extends BaseSandboxService {
 
         try {
             // Environment variables will be set via session creation on first use
-            if (localEnvVars && Object.keys(localEnvVars).length > 0) {
-                this.logger.info('Environment variables will be configured via session', { envVars: Object.keys(localEnvVars) });
+            if (envVars && Object.keys(envVars).length > 0) {
+                this.logger.info('Environment variables will be configured via session', { envVars: Object.keys(envVars) });
             }
             let instanceId: string;
             if (env.ALLOCATION_STRATEGY === 'one_to_one') {
@@ -1657,15 +1694,14 @@ export class SandboxSdkClient extends BaseSandboxService {
             const metadataStartTime = Date.now();
             // Store instance metadata
             const metadata = {
-                templateName: templateName,
                 projectName: projectName,
                 startTime: new Date().toISOString(),
                 webhookUrl: webhookUrl,
-                previewURL: results?.previewURL,
-                processId: results?.processId,
-                tunnelURL: results?.tunnelURL,
-                allocatedPort: results?.allocatedPort,
-                donttouch_files: donttouchFiles,
+                previewURL: results.previewURL,
+                processId: results.processId,
+                tunnelURL: results.tunnelURL,
+                allocatedPort: results.allocatedPort,
+                donttouch_files: dontTouchFiles,
                 redacted_files: redactedFiles,
             };
             await this.storeInstanceMetadata(instanceId, metadata);
@@ -1691,10 +1727,10 @@ export class SandboxSdkClient extends BaseSandboxService {
             return {
                 success: true,
                 runId: instanceId,
-                message: `Successfully created instance from template ${templateName}`,
-                previewURL: results?.previewURL,
-                tunnelURL: results?.tunnelURL,
-                processId: results?.processId,
+                message: `Successfully created instance ${instanceId}`,
+                previewURL: results.previewURL,
+                tunnelURL: results.tunnelURL,
+                processId: results.processId,
             };
         } catch (error) {
             const totalDuration = Date.now() - createStartTime;
@@ -1734,14 +1770,13 @@ export class SandboxSdkClient extends BaseSandboxService {
 
             const instanceDetails: InstanceDetails = {
                 runId: instanceId,
-                templateName: metadata.templateName,
                 startTime,
                 uptime,
                 directory: instanceId,
                 serviceDirectory: instanceId,
                 fileTree,
                 runtimeErrors: runtimeErrors.errors,
-                previewURL: metadata.previewURL,
+                previewURL: migratePreviewUrl(metadata.previewURL, env),
                 processId: metadata.processId,
                 tunnelURL: metadata.tunnelURL,
             };
@@ -1798,7 +1833,7 @@ export class SandboxSdkClient extends BaseSandboxService {
                 pending: false,
                 isHealthy,
                 message: isHealthy ? 'Instance is running normally' : 'Instance may have issues',
-                previewURL: metadata.previewURL,
+                previewURL: migratePreviewUrl(metadata.previewURL, env),
                 tunnelURL: metadata.tunnelURL,
                 processId: metadata.processId
             };
@@ -1972,7 +2007,10 @@ export class SandboxSdkClient extends BaseSandboxService {
                 failedFiles: failedFiles.length > 0 ? failedFiles : undefined
             });
 
-            // If code files were modified, touch vite.config.ts to trigger a rebuild
+            // If code files were modified, touch .reload-trigger to trigger a page reload
+            // We use .reload-trigger instead of vite.config.ts because:
+            // - vite.config.ts triggers a FULL SERVER RESTART (disposes miniflare, causes race condition errors)
+            // - .reload-trigger triggers a PAGE RELOAD via WebSocket (server stays running)
             if (successCount > 0 && filteredFiles.some(file => file.filePath.endsWith('.ts') || file.filePath.endsWith('.tsx'))) {
                 this.logger.info('🔄 [WRITE_FILES] Code files modified, touching vite.config.ts to trigger rebuild', { instanceId });
                 try {
@@ -2059,6 +2097,7 @@ export class SandboxSdkClient extends BaseSandboxService {
                         filePath
                     };
                 } catch (error) {
+                    this.logger.error(`Failed to read file ${filePath}`, { error });
                     return {
                         result: null,
                         filePath,
@@ -2248,8 +2287,6 @@ export class SandboxSdkClient extends BaseSandboxService {
 
     async clearInstanceErrors(instanceId: string): Promise<ClearErrorsResponse> {
         try {
-            let clearedCount = 0;
-
             // Try enhanced error system first - clear ALL errors
             try {
                 const cmd = `timeout 10s monitor-cli errors clear -i ${instanceId} --confirm`;
@@ -2274,11 +2311,11 @@ export class SandboxSdkClient extends BaseSandboxService {
                 this.logger.warn('Error clearing unavailable, falling back to legacy', enhancedError);
             }
 
-            this.logger.info(`Cleared ${clearedCount} errors for instance ${instanceId}`);
+            this.logger.info(`Cleared errors for instance ${instanceId}`);
 
             return {
                 success: true,
-                message: `Cleared ${clearedCount} errors`
+                message: `Cleared errors`
             };
         } catch (error) {
             this.logger.error('clearInstanceErrors', error, { instanceId });
@@ -2605,8 +2642,14 @@ export class SandboxSdkClient extends BaseSandboxService {
             );
 
             // Step 7: Deploy using pure function
-            this.logger.info('Deploying to Cloudflare');
-            if ('DISPATCH_NAMESPACE' in env) {
+            const useDispatch = target === 'platform';
+            this.logger.info('Deploying to Cloudflare', { target });
+            
+            if (useDispatch) {
+                if (!('DISPATCH_NAMESPACE' in env)) {
+                    throw new Error('DISPATCH_NAMESPACE not found in environment variables, cannot deploy without dispatch namespace');
+                }
+                
                 this.logger.info('Using dispatch namespace', { dispatchNamespace: env.DISPATCH_NAMESPACE });
                 await deployToDispatch(
                     {
@@ -2619,7 +2662,13 @@ export class SandboxSdkClient extends BaseSandboxService {
                     config.assets
                 );
             } else {
-                throw new Error('DISPATCH_NAMESPACE not found in environment variables, cannot deploy without dispatch namespace');
+                await deployWorker(
+                    deployConfig,
+                    fileContents,
+                    additionalModules,
+                    config.migrations,
+                    config.assets
+                );
             }
 
             // Step 8: Determine deployment URL
@@ -2630,7 +2679,7 @@ export class SandboxSdkClient extends BaseSandboxService {
                 instanceId,
                 deployedUrl,
                 deploymentId,
-                mode: 'dispatch-namespace'
+                mode: useDispatch ? 'dispatch-namespace' : 'user-worker'
             });
 
             return {

@@ -35,8 +35,10 @@ export class ModelTestService extends BaseService {
                 maxTokens: Math.min(modelConfig.max_tokens || 100, 100), // Limit to 100 tokens for test
                 temperature: modelConfig.temperature || 0.1,
                 reasoning_effort: modelConfig.reasoning_effort,
-                userApiKeys,
                 actionKey: 'testModelConfig',
+                runtimeOverrides: {
+                    userApiKeys
+                }
             });
 
             const endTime = Date.now();
@@ -116,7 +118,9 @@ export class ModelTestService extends BaseService {
                 maxTokens: 10,
                 temperature: 0,
                 actionKey: 'testModelConfig',
-                userApiKeys: Object.fromEntries(testApiKeys)
+                runtimeOverrides: {
+                    userApiKeys: Object.fromEntries(testApiKeys)
+                }
             });
 
             const endTime = Date.now();
@@ -177,7 +181,7 @@ export class ModelTestService extends BaseService {
             'google-ai-studio': AIModels.GEMINI_2_5_FLASH,
             'gemini': AIModels.GEMINI_2_5_FLASH,
             // 'openrouter': AIModels.OPENROUTER_QWEN_3_CODER, // Removed - not available
-            'cerebras': AIModels.CEREBRAS_GPT_OSS
+            // 'cerebras': AIModels.CEREBRAS_GPT_OSS
         };
 
         return testModels[provider] || null;

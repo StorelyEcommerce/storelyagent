@@ -61,6 +61,22 @@ export type {
 
 export type { PlatformStatusData } from 'worker/api/controllers/status/types';
 
+export type { CapabilitiesData } from 'worker/api/controllers/capabilities/types';
+
+export type {
+  ViewMode,
+  FeatureCapabilities,
+  FeatureDefinition,
+  ViewDefinition,
+  PlatformCapabilities,
+  PlatformCapabilitiesConfig,
+} from 'worker/agents/core/features/types';
+
+export {
+  DEFAULT_FEATURE_DEFINITIONS,
+  getBehaviorTypeForProject,
+} from 'worker/agents/core/features';
+
 // Model Config API Types
 export type {
   ModelConfigsData,
@@ -99,12 +115,7 @@ export interface ModelConfigUpdate {
 }
 
 // Secrets API Types
-export type {
-  SecretsData,
-  SecretStoreData,
-  SecretDeleteData,
-  SecretTemplatesData
-} from 'worker/api/controllers/secrets/types';
+export type { SecretTemplatesData } from 'worker/api/controllers/secrets/types';
 
 // Stripe Connect API Types
 export type {
@@ -133,6 +144,11 @@ export type {
   AgentConnectionData,
 } from 'worker/api/controllers/agent/types';
 
+// Template Types
+export type {
+  TemplateDetails,
+} from 'worker/services/sandbox/sandboxTypes';
+
 // WebSocket Types
 export type {
   WebSocketMessage,
@@ -152,7 +168,6 @@ export type {
   FavoriteToggleResult,
   UserStats,
   UserActivity,
-  EncryptedSecret,
   UserModelConfigWithMetadata,
   ModelTestResult
 } from 'worker/database/types';
@@ -160,6 +175,7 @@ export type {
 // Agent/Generator Types
 export type {
   Blueprint as BlueprintType,
+  PhasicBlueprint,
   CodeReviewOutputType,
   FileConceptType,
   FileOutputType as GeneratedFile,
@@ -168,6 +184,11 @@ export type {
 export type {
   CodeGenState
 } from 'worker/agents/core/state';
+
+export type {
+  BehaviorType,
+  ProjectType
+} from 'worker/agents/core/types';
 
 export type {
   ConversationMessage,
@@ -190,7 +211,7 @@ export type {
 export type { RateLimitError } from "worker/services/rate-limit/errors";
 export type { AgentPreviewResponse, AgentCloudflareDeployResponse, CodeGenArgs } from 'worker/api/controllers/agent/types';
 export type { RateLimitErrorResponse } from 'worker/api/responses';
-export { RateLimitExceededError, SecurityError, SecurityErrorType } from 'shared/types/errors';
+export { RateLimitExceededError, SecurityError, SecurityErrorType } from '../shared/types/errors.js';
 
 export type { AIModels } from 'worker/agents/inferutils/config.types';
 // Model selection types

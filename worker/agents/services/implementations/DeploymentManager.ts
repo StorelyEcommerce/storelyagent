@@ -25,14 +25,14 @@ const HEALTH_CHECK_INTERVAL_MS = 30000;
  * Handles instance creation, file deployment, analysis, and GitHub/Cloudflare export
  * Also manages sessionId and health check intervals
  */
-export class DeploymentManager extends BaseAgentService implements IDeploymentManager {
+export class DeploymentManager extends BaseAgentService<BaseProjectState> implements IDeploymentManager {
     private healthCheckInterval: ReturnType<typeof setInterval> | null = null;
     private currentDeploymentPromise: Promise<PreviewType | null> | null = null;
     private cachedSandboxClient: BaseSandboxService | null = null;
 
     constructor(
-        options: ServiceOptions,
-        private maxCommandsHistory: number
+        options: ServiceOptions<BaseProjectState>,
+        private maxCommandsHistory: number,
     ) {
         super(options);
 
@@ -267,12 +267,11 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
      */
     async fetchRuntimeErrors(clear: boolean = true): Promise<RuntimeError[]> {
         const { sandboxInstanceId } = this.getState();
-        const logger = this.getLog();
-        const client = this.getClient();
-
         if (!sandboxInstanceId) {
             throw new Error('No sandbox instance available for runtime error fetching');
         }
+        const logger = this.getLog();
+        const client = this.getClient();
 
         const resp = await client.getInstanceErrors(sandboxInstanceId, clear);
 
@@ -767,6 +766,9 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
      * Ensure sandbox instance exists and is healthy
      */
     async ensureInstance(redeploy: boolean): Promise<DeploymentResult> {
+        if (redeploy) {
+            this.resetSessionId();
+        }
         const state = this.getState();
         const { sandboxInstanceId } = state;
         const logger = this.getLog();
@@ -887,7 +889,6 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
      */
     private async createNewInstance(): Promise<BootstrapResponse | null> {
         const state = this.getState();
-        const templateName = state.templateName;
         const projectName = state.projectName;
         const logger = this.getLog();
 
@@ -906,8 +907,8 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
                 localEnvVars = {
                     "CF_AI_BASE_URL": generateAppProxyUrl(this.env),
                     "CF_AI_API_KEY": await generateAppProxyToken(
-                        state.inferenceContext.agentId,
-                        state.inferenceContext.userId,
+                        state.metadata.agentId,
+                        state.metadata.userId,
                         this.env
                     )
                 };
@@ -1082,7 +1083,10 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
      * Deploy to Cloudflare Workers
      * Returns deployment URL and deployment ID for database updates
      */
-    async deployToCloudflare(callbacks?: CloudflareDeploymentCallbacks): Promise<{ deploymentUrl: string | null; deploymentId?: string }> {
+    async deployToCloudflare(request?: {
+        target?: DeploymentTarget;
+        callbacks?: CloudflareDeploymentCallbacks;
+    }): Promise<{ deploymentUrl: string | null; deploymentId?: string }> {
         const state = this.getState();
         const logger = this.getLog();
         const client = this.getClient();
@@ -1153,7 +1157,7 @@ export class DeploymentManager extends BaseAgentService implements IDeploymentMa
             if (deploymentResult?.error?.includes('Failed to read instance metadata') ||
                 deploymentResult?.error?.includes(`/bin/sh: 1: cd: can't cd to i-`)) {
                 logger.error('Deployment sandbox died - preview expired');
-                callbacks?.onPreviewExpired?.();
+                this.deployToSandbox();
             } else {
                 callbacks?.onError?.({
                     message: `Deployment failed: ${deploymentResult?.message || 'Unknown error'}`,

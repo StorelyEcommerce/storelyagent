@@ -1,10 +1,10 @@
 import { createSystemMessage, createUserMessage, createMultiModalUserMessage } from '../inferutils/common';
-import { TemplateListResponse} from '../../services/sandbox/sandboxTypes';
+import { TemplateInfo } from '../../services/sandbox/sandboxTypes';
 import { createLogger } from '../../logger';
 import { executeInference } from '../inferutils/infer';
 import { InferenceContext } from '../inferutils/config.types';
 import { RateLimitExceededError, SecurityError } from 'shared/types/errors';
-import { TemplateSelection, TemplateSelectionSchema } from '../../agents/schemas';
+import { TemplateSelection, TemplateSelectionSchema, ProjectTypePredictionSchema } from '../../agents/schemas';
 import { generateSecureToken } from 'worker/utils/cryptoUtils';
 import type { ImageAttachment, ProcessedImageAttachment } from '../../types/image-attachment';
 import { imageToBase64 } from 'worker/utils/images';
@@ -14,32 +14,94 @@ const logger = createLogger('TemplateSelector');
 interface SelectTemplateArgs {
     env: Env;
     query: string;
-    availableTemplates: TemplateListResponse['templates'];
+    projectType?: ProjectType | 'auto';
+    availableTemplates: TemplateInfo[];
     inferenceContext: InferenceContext;
     images?: Array<ImageAttachment | ProcessedImageAttachment>;
 }
 
 /**
- * Uses AI to select the most suitable template for a given query.
+ * Predicts the project type from the user query
  */
-export async function selectTemplate({ env, query, availableTemplates, inferenceContext, images }: SelectTemplateArgs): Promise<TemplateSelection> {
-    if (availableTemplates.length === 0) {
-        logger.info("No templates available for selection.");
-        return { selectedTemplateName: null, reasoning: "No templates were available to choose from.", useCase: null, complexity: null, styleSelection: null, projectName: '' };
-    }
-
+async function predictProjectType(
+    env: Env,
+    query: string,
+    inferenceContext: InferenceContext,
+    images?: ImageAttachment[]
+): Promise<ProjectType> {
     try {
-        logger.info("Asking AI to select a template", { 
-            query, 
-            queryLength: query.length,
-            imagesCount: images?.length || 0,
-            availableTemplates: availableTemplates.map(t => t.name),
-            templateCount: availableTemplates.length 
+        logger.info('Predicting project type from query', { queryLength: query.length });
+
+        const systemPrompt = `You are an Expert Project Type Classifier at Cloudflare. Your task is to analyze user requests and determine what type of project they want to build.
+
+## PROJECT TYPES:
+
+**app** - Full-stack web applications
+- Interactive websites with frontend and backend
+- Dashboards, games, social platforms, e-commerce sites
+- Any application requiring user interface and interactivity
+- Examples: "Build a todo app", "Create a gaming dashboard", "Make a blog platform"
+
+**workflow** - Backend workflows and APIs
+- Server-side logic without UI
+- API endpoints, cron jobs, webhooks
+- Data processing, automation tasks
+- Examples: "Create an API to process payments", "Build a webhook handler", "Automate data sync"
+
+**presentation** - Slides and presentation decks
+- Slide-based content for presentations
+- Marketing decks, pitch decks, educational slides
+- Visual storytelling with slides
+- Examples: "Create slides about AI", "Make a product pitch deck", "Build a presentation on climate change"
+
+**general** - From-scratch content or mixed artifacts
+- Docs/notes/specs in Markdown/MDX, or a slide deck initialized later
+- Start with docs when users ask for write-ups; initialize slides if explicitly requested or clearly appropriate
+- No sandbox/runtime unless slides/app are initialized by the builder
+- Examples: "Write a spec", "Draft an outline and slides if helpful", "Create teaching materials"
+
+## RULES:
+- Default to 'app' when uncertain
+- Choose 'workflow' only when explicitly about APIs, automation, or backend-only tasks
+- Choose 'presentation' only when explicitly about slides, decks, or presentations
+- Choose 'general' for docs/notes/specs or when the user asks to start from scratch without a specific runtime template
+- Consider the presence of UI/visual requirements as indicator for 'app'
+- High confidence when keywords are explicit, medium/low when inferring`;
+
+        const userPrompt = `**User Request:** "${query}"
+
+**Task:** Determine the project type and provide:
+1. Project type (app, workflow, presentation, or general)
+2. Reasoning for your classification
+3. Confidence level (high, medium, low)
+
+Analyze the request carefully and classify accordingly.`;
+
+        const userMessage = images && images.length > 0
+            ? createMultiModalUserMessage(
+                userPrompt,
+                images.map(img => `data:${img.mimeType};base64,${img.base64Data}`),
+                'high'
+              )
+            : createUserMessage(userPrompt);
+
+        const messages = [
+            createSystemMessage(systemPrompt),
+            userMessage
+        ];
+
+        const { object: prediction } = await executeInference({
+            env,
+            messages,
+            agentActionName: "templateSelection", // Reuse existing agent action
+            schema: ProjectTypePredictionSchema,
+            context: inferenceContext,
+            maxTokens: 500,
         });
 
-        const templateDescriptions = availableTemplates.map((t, index) =>
-            `- Template #${index + 1} \n Name - ${t.name} \n Language: ${t.language}, Frameworks: ${t.frameworks?.join(', ') || 'None'}\n ${t.description.selection}`
-        ).join('\n\n');
+        logger.info(`Predicted project type: ${prediction.projectType} (${prediction.confidence} confidence)`, {
+            reasoning: prediction.reasoning
+        });
 
         const systemPrompt = `You are an Expert Software Architect at Cloudflare specializing in ecommerce store template selection for rapid development. Your task is to select the most suitable starting ecommerce store template from our custom store template repository based on user requirements for building ecommerce stores and ecommerce-related applications.
 
@@ -97,6 +159,7 @@ Reasoning: "Base store template provides flexible product management, multiple c
 - If only one template is available, select it and note it's the base template that can be customized
 - If multiple templates are available, use selection criteria to choose the best match
 - Ignore misleading template names - analyze actual features
+- **ONLY** Choose from the list of available templates
 - Focus on functionality over naming conventions
 - For styleSelection, derive style primarily from user-provided text and images (brand adjectives, mood words, aesthetic references)
 - If your own inferred style conflicts with explicit user styling cues, follow the user's cues
@@ -105,14 +168,15 @@ Reasoning: "Base store template provides flexible product management, multiple c
 
         const userPrompt = `**User Request:** "${query}"
 
-**Available Templates:**
-${templateDescriptions}
+## **Available Templates:**
+**ONLY** These template names are available for selection: ${validTemplateNames.join(', ')}
+
+Template detail: ${templateDescriptions}
 
 **Task:** Select the most suitable template and provide:
 1. Template name (exact match from list)
 2. Clear reasoning for why it fits the user's needs
-3. Appropriate style for the project type. Try to come up with unique styles that might look nice and unique. Be creative about your choices. But don't pick brutalist all the time.
-4. Descriptive project name
+${actualProjectType === 'app' ? '3. Appropriate style for the project type. Try to come up with unique styles that might look nice and unique. Be creative about your choices. But don\'t pick brutalist all the time.' : ''}
 
 Analyze each template's features, frameworks, and architecture to make the best match.
 ${images && images.length > 0 ? `\n**Note:** User provided ${images.length} image(s) - consider visual requirements and UI style from the images.` : ''}
@@ -154,9 +218,18 @@ ENTROPY SEED: ${generateSecureToken(64)} - for unique results`;
             format: 'markdown',
         });
 
+        if (!selection) {
+            logger.error('Template selection returned no result after all retries');
+            throw new Error('Failed to select template: inference returned null');
+        }
 
         logger.info(`AI template selection result: ${selection.selectedTemplateName || 'None'}, Reasoning: ${selection.reasoning}`);
-        return selection;
+        
+        // Ensure projectType is set correctly
+        return {
+            ...selection,
+            projectType: actualProjectType
+        };
 
     } catch (error) {
         logger.error("Error during AI template selection:", error);

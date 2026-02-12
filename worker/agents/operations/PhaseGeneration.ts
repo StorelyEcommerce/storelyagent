@@ -8,11 +8,13 @@ import { AgentOperation, getSystemPromptWithProjectContext, OperationOptions } f
 import { AGENT_CONFIG } from '../inferutils/config';
 import type { UserContext } from '../core/types';
 import { imagesToBase64 } from 'worker/utils/images';
+import { PhasicGenerationContext } from '../domain/values/GenerationContext';
 
 export interface PhaseGenerationInputs {
     issues: IssueReport;
     userContext?: UserContext;
     isUserSuggestedPhase?: boolean;
+    isFinal: boolean;
 }
 
 const SYSTEM_PROMPT = `<ROLE>
@@ -23,7 +25,7 @@ const SYSTEM_PROMPT = `<ROLE>
 <TASK>
     You are given the blueprint (PRD) and the client query. You will be provided with all previously implemented project phases, the current latest snapshot of the codebase, and any current runtime issues or static analysis reports.
     
-    **Your primary task:** Design the next phase of the project as a deployable milestone leading to project completion or to address any user feedbacks or reported bugs.
+    **Your primary task:** Design the next phase of the project as a deployable milestone leading to project completion or to address any user feedbacks or reported bugs (runtime error fixing is the highest priority). Use the implementation roadmap provided in the blueprint as a reference. Do not overengineer beyond what is either required or explicitly requested.
     
     **CRITICAL SCOPE CONSTRAINT:**
     - ONLY implement features that the user explicitly requested in the original query or subsequent feedback.
@@ -106,6 +108,12 @@ const SYSTEM_PROMPT = `<ROLE>
     ✅ Hero images: \`class="aspect-video object-cover w-full max-h-[60vh]"\`
     ❌ Without sizing constraints, images will be HUGE and break the layout
 
+    **Preinstalled UI Components:**
+    - src/components/ui/* files are preinstalled shadcn primitives (Button, Card, Tabs, etc.)
+    - DO NOT include them in phase file lists - they already exist. Rewriting/modifying them might result in runtime errors.
+    - Import directly: import { Tabs } from "@/components/ui/tabs"
+    - If a component is missing, add install command: bunx shadcn@latest add tabs
+
     **REMEMBER: This is not a toy or educational project. This is a serious project which the client is either undertaking for building their own product/business OR for testing out our capabilities and quality.**
 </TASK>
 
@@ -118,10 +126,6 @@ ${PROMPT_UTILS.UI_GUIDELINES}
 ${PROMPT_UTILS.LIQUID_CODE_QUALITY_RULES}
 
 ${PROMPT_UTILS.COMMON_DEP_DOCUMENTATION}
-
-<CLIENT REQUEST>
-"{{query}}"
-</CLIENT REQUEST>
 
 <BLUEPRINT>
 {{blueprint}}
@@ -186,17 +190,91 @@ Adhere to the following guidelines:
 •   Use the <PHASES GENERATION STRATEGY> section to guide your phase generation.
 •   Ensure the next phase logically and iteratively builds on the previous one, maintaining visual excellence with modern design patterns, smooth interactions, and professional UI polish.
 •   Provide a clear, concise, to the point description of the next phase and the purpose and contents of each file in it.
-•   Keep all the description fields very short and concise.
+•   Keep all the description fields very short and concise but unambiguous so the coding agent can implement them effectively and accurately.
 •   If there are any files that were supposed to be generated in the previous phase, but were not, please mention them in the phase description and suggest them in the phase.
 •   Always suggest phases in sequential ordering - Phase 1 comes after Phase 0, Phase 2 comes after Phase 1 and so on.
 •   **Every phase must be deployable with all views/pages working properly and looking professional.**
 •   IF you need to get any file to be deleted or cleaned, please set the \`changes\` field to \`delete\` for that file.
+•   **\`changes\` field format:** 
+    - WHAT (user-visible behavior) + HOW (conceptual approach) + CONSTRAINTS — but NO code/syntax
+    
+    ❌ "openWindow('finder', file.name, FinderWindow, {dirId: file.id})"
+    ✅ "Double-click folder navigates within same window (update dir state, not new window). Breadcrumbs show path, clickable to ancestors."
+    
+    ❌ "Add useState for loading, show Skeleton, catch error and setError"
+    ✅ "Fetch files on mount with loading/error states. Skeleton during load, error with retry on failure, empty state with create prompt."
+    
+    ❌ "onPointerDown check e.target === e.currentTarget before dragControls.start"
+    ✅ "Drag from title bar area only, not from buttons or title text. Use existing drag controls."
 •   **Visual assets:** Use external image URLs, canvas elements, or icon libraries. Reference these in file descriptions as needed.
 </SUGGESTING NEXT PHASE>
 
 {{issues}}
 
 {{userSuggestions}}`;
+
+const LAST_PHASE_PROMPT = `Finalization and Review phase. 
+Goal: Thoroughly review the entire codebase generated in previous phases. Identify and fix any remaining critical issues (runtime errors, logic flaws, rendering bugs) before deployment.
+** YOU MUST HALT AFTER THIS PHASE **
+
+<REVIEW FOCUS & METHODOLOGY>
+    **Your primary goal is to find showstopper bugs and UI/UX problems. Prioritize:**
+    1.  **Runtime Errors & Crashes:** Any code that will obviously throw errors (Syntax errors, TDZ/Initialization errors, TypeErrors like reading property of undefined, incorrect API calls). **Analyze the provided \`errors\` carefully for root causes.**
+    2.  **Critical Logic Flaws:** Does the application logic *actually* implement the behavior described in the blueprint? (e.g., Simulate game moves mentally: Does moving left work? Does scoring update correctly? Are win/loss conditions accurate?).
+    3.  **UI Rendering Failures:** Will the UI render as expected? Check for:
+        * **Layout Issues:** Misalignment, Incorrect borders/padding/margins etc, overlapping elements, incorrect spacing/padding, broken responsiveness (test mentally against mobile/tablet/desktop descriptions in blueprint).
+        * **Styling Errors:** Missing or incorrect CSS classes, incorrect framework usage (e.g., wrong Tailwind class).
+        * **Missing Elements:** Are all UI elements described in the blueprint present?
+    4.  **State Management Bugs:** Does state update correctly? Do UI updates reliably reflect state changes? Are there potential race conditions or infinite update loops?
+    5.  **Data Flow & Integration Errors:** Is data passed correctly between components? Do component interactions work as expected? Are imports valid and do the imported files/functions exist?
+    6.  **Event Handling:** Do buttons, forms, and other interactions trigger the correct logic specified in the blueprint?
+    7. **Import/Dependency Issues:** Are all imports valid? Are there any missing or incorrectly referenced dependencies? Are they correct for the specific version installed?
+    8. **Library version issues:** Are you sure the code written is compatible with the installed version of the library? (e.g., Tailwind v3 vs. v4)
+    9. **Especially lookout for setState inside render or without dependencies**
+        - Mentally simulate the linting rule \`react-hooks/exhaustive-deps\`.
+
+    **Method:**
+    •   Review file-by-file, considering its dependencies and dependents.
+    •   Mentally simulate user flows described in the blueprint.
+    •   Cross-reference implementation against the \`description\`, \`userFlow\`, \`components\`, \`dataFlow\`, and \`implementationDetails\` sections *constantly*.
+    •   Pay *extreme* attention to declaration order within scopes.
+    •   Check for any imports that are not defined, installed or are not in the template.
+    •   Come up with a the most important and urgent issues to fix first. We will run code reviews in multiple iterations, so focus on the most important issues first.
+
+    IF there are any runtime errors or linting errors provided, focus on fixing them first and foremost. No need to provide any minor fixes or improvements to the code. Just focus on fixing the errors.
+
+</REVIEW FOCUS & METHODOLOGY>
+
+<ISSUES TO REPORT (Answer these based on your review):>
+    1.  **Functionality Mismatch:** Does the codebase *fail* to deliver any core functionality described in the blueprint? (Yes/No + Specific examples)
+    2.  **Logic Errors:** Are there flaws in the application logic (state transitions, calculations, game rules, etc.) compared to the blueprint? (Yes/No + Specific examples)
+    3.  **Interaction Failures:** Do user interactions (clicks, inputs) behave incorrectly based on blueprint requirements? (Yes/No + Specific examples)
+    4.  **Data Flow Problems:** Is data not flowing correctly between components or managed incorrectly? (Yes/No + Specific examples)
+    5.  **State Management Issues:** Does state management lead to incorrect application behavior or UI? (Yes/No + Specific examples)
+    6.  **UI Rendering Bugs:** Are there specific rendering issues (layout, alignment, spacing, overlap, responsiveness)? (Yes/No + Specific examples of files/components and issues)
+    7.  **Performance Bottlenecks:** Are there obvious performance issues (e.g., inefficient loops, excessive re-renders)? (Yes/No + Specific examples)
+    8.  **UI/UX Quality:** Is the UI significantly different from the blueprint's description or generally poor/unusable (ignoring minor aesthetics)? (Yes/No + Specific examples)
+    9.  **Runtime Error Potential:** Identify specific code sections highly likely to cause runtime errors (TDZ, undefined properties, bad imports, syntax errors etc.). (Yes/No + Specific examples)
+    10. **Dependency/Import Issues:** Are there any invalid imports or usage of non-existent/uninstalled dependencies? (Yes/No + Specific examples)
+
+    If issues pertain to just dependencies not being installed, please only suggest the necessary \`bun add\` commands to install them. Do not suggest file level fixes.
+</ISSUES TO REPORT (Answer these based on your review):>
+
+**Regeneration Rules:**
+    - Only regenerate files with **critical issues** causing runtime errors, significant logic flaws, or major rendering failures.
+    - **Exception:** Small UI/CSS files *can* be regenerated for styling/alignment fixes if needed.
+    - Do **not** regenerate for minor formatting or non-critical stylistic preferences.
+    - Do **not** make major refactors or architectural changes.
+
+<INSTRUCTIONS>
+    Do not make major changes to the code. Just focus on fixing the critical runtime errors, issues and bugs in isolated and contained ways.
+</INSTRUCTIONS>
+
+{{issues}}
+
+{{userSuggestions}}
+
+This phase prepares the code for final deployment.`;
 
 const formatUserSuggestions = (suggestions?: string[] | null): string => {
     if (!suggestions || suggestions.length === 0) {
@@ -232,8 +310,9 @@ ${serialized}`;
     return serialized;
 };
 
-const userPromptFormatter = (issues: IssueReport, userSuggestions?: string[], isUserSuggestedPhase?: boolean) => {
-    let prompt = NEXT_PHASE_USER_PROMPT
+const userPromptFormatter = (isFinal: boolean, issues: IssueReport, userSuggestions?: string[], isUserSuggestedPhase?: boolean) => {
+    let prompt = isFinal ? LAST_PHASE_PROMPT : NEXT_PHASE_USER_PROMPT;
+    prompt = prompt
         .replaceAll('{{issues}}', issuesPromptFormatterWithGuidelines(issues))
         .replaceAll('{{userSuggestions}}', formatUserSuggestions(userSuggestions));
 
@@ -245,12 +324,12 @@ const userPromptFormatter = (issues: IssueReport, userSuggestions?: string[], is
 
     return PROMPT_UTILS.verifyPrompt(prompt);
 }
-export class PhaseGenerationOperation extends AgentOperation<PhaseGenerationInputs, PhaseConceptGenerationSchemaType> {
+export class PhaseGenerationOperation extends AgentOperation<PhasicGenerationContext, PhaseGenerationInputs, PhaseConceptGenerationSchemaType> {
     async execute(
         inputs: PhaseGenerationInputs,
-        options: OperationOptions
+        options: OperationOptions<PhasicGenerationContext>
     ): Promise<PhaseConceptGenerationSchemaType> {
-        const { issues, userContext, isUserSuggestedPhase } = inputs;
+        const { issues, userContext, isUserSuggestedPhase, isFinal } = inputs;
         const { env, logger, context } = options;
         try {
             const suggestionsInfo = userContext?.suggestions && userContext.suggestions.length > 0
@@ -263,7 +342,7 @@ export class PhaseGenerationOperation extends AgentOperation<PhaseGenerationInpu
             logger.info(`Generating next phase ${suggestionsInfo}${imagesInfo}`);
 
             // Create user message with optional images
-            const userPrompt = userPromptFormatter(issues, userContext?.suggestions, isUserSuggestedPhase);
+            const userPrompt = userPromptFormatter(isFinal, issues, userContext?.suggestions, isUserSuggestedPhase);
             const userMessage = userContext?.images && userContext.images.length > 0
                 ? createMultiModalUserMessage(
                     userPrompt,

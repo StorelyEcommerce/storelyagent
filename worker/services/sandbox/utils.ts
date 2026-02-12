@@ -19,9 +19,12 @@ export function filterReadOnlyFiles(filePaths: string[]): string[] {
 
 export function getTemplateImportantFiles(templateDetails: TemplateDetails, filterRedacted: boolean = true, excludeBackend: boolean = false): TemplateFile[] {
     const { importantFiles, allFiles, redactedFiles } = templateDetails;
+
     const redactedSet = new Set(redactedFiles);
-    
+    const importantSet = new Set(importantFiles);
+
     const result: TemplateFile[] = [];
+
     for (const [filePath, fileContents] of Object.entries(allFiles)) {
         // Skip backend files if excludeBackend is true (for write operations only)
         if (excludeBackend && isBackendReadOnlyFile(filePath)) {
@@ -33,7 +36,7 @@ export function getTemplateImportantFiles(templateDetails: TemplateDetails, filt
             if (contents) result.push({ filePath, fileContents: contents });
         }
     }
-    
+
     return result;
 }
 

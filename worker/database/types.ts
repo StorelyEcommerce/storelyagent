@@ -118,6 +118,7 @@ export interface PublicAppQueryOptions extends BaseAppQueryOptions {
 export interface OwnershipResult {
     exists: boolean;
     isOwner: boolean;
+    visibility?: 'private' | 'public' | null;
 }
 
 /**
@@ -210,21 +211,6 @@ export interface AppStats {
     forkCount: number;
     likeCount: number;
 }
-
-// ========================================
-// SECRETS AND CONFIGURATION TYPES
-// ========================================
-
-/**
- * Raw Secret data for storage (before encryption)  
- */
-export interface SecretData extends Omit<schema.UserSecret, 'encryptedValue' | 'id' | 'isActive' | 'createdAt' | 'updatedAt' | 'lastUsed' | 'userId' | 'usageCount' | 'keyPreview' > {
-    value: string;
-}
-/**
- * Encrypted secret response (without sensitive data)
- */
-export type EncryptedSecret = Omit<schema.UserSecret, 'encryptedValue'>;
 
 /**
  * Model configuration with user override metadata

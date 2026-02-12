@@ -1,6 +1,7 @@
 import type {
     Blueprint, DesignDNA, PhaseConceptType,
     FileOutputType,
+    Blueprint,
 } from '../schemas';
 // import type { ScreenshotData } from './types';
 import type { ConversationMessage } from '../inferutils/common';
@@ -9,6 +10,11 @@ import type { ImageAttachment, ProcessedImageAttachment } from 'worker/types/ima
 
 export interface FileState extends FileOutputType {
     lastDiff: string;
+}
+
+export interface FileServingToken {
+    token: string;
+    createdAt: number;
 }
 
 export interface PhaseState extends PhaseConceptType {
@@ -24,7 +30,7 @@ export enum CurrentDevState {
     FINALIZING,
 }
 
-export const MAX_PHASES = 12;
+export const MAX_PHASES = 10;
 
 export interface CodeGenState {
     blueprint: Blueprint;
@@ -44,7 +50,6 @@ export interface CodeGenState {
     agentMode: 'deterministic' | 'smart';
     sessionId: string;
     hostname: string;
-    phasesCounter: number;
 
     pendingUserInputs: string[];
     currentDevState: CurrentDevState;
@@ -53,8 +58,8 @@ export interface CodeGenState {
 
     conversationMessages: ConversationMessage[];
     projectUpdatesAccumulator: string[];
-    inferenceContext: InferenceContext;
-
+    
+    // Deep debug
     lastDeepDebugTranscript: string | null;
     isDeepDebugging?: boolean; // Track if debug session is active
     storeInfoPending?: boolean; // Track if waiting for store info before initialization

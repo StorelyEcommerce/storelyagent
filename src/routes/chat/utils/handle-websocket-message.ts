@@ -1,5 +1,5 @@
 import type { WebSocket } from 'partysocket';
-import type { WebSocketMessage, BlueprintType, ConversationMessage } from '@/api-types';
+import type { WebSocketMessage, BlueprintType, ConversationMessage, AgentState, PhasicState, BehaviorType, ProjectType, TemplateDetails } from '@/api-types';
 import { deduplicateMessages, isAssistantMessageDuplicate } from './deduplicate-messages';
 import { logger } from '@/utils/logger';
 import { getFileType } from '@/utils/string';
@@ -18,10 +18,22 @@ import {
     appendToolEvent,
     type ChatMessage,
 } from './message-helpers';
-import { completeStages } from './project-stage-helpers';
+import { completeStages, type ProjectStage } from './project-stage-helpers';
 import { sendWebSocketMessage } from './websocket-helpers';
-import type { FileType, PhaseTimelineItem } from '../hooks/use-chat';
+import type { PhaseTimelineItem } from '../hooks/use-chat';
+import type { FileType } from '@/api-types';
 import { toast } from 'sonner';
+import { createRepairingJSONParser } from '@/utils/ndjson-parser/ndjson-parser';
+
+const isPhasicState = (state: AgentState): state is PhasicState => {
+	const record = state as unknown as Record<string, unknown>;
+	const behaviorType = record.behaviorType;
+	if (behaviorType === 'phasic') return true;
+	if (behaviorType === undefined || behaviorType === null) {
+		return Array.isArray(record.generatedPhases);
+	}
+	return false;
+};
 
 export interface HandleMessageDeps {
     // State setters
@@ -57,12 +69,12 @@ export interface HandleMessageDeps {
     files: FileType[];
     phaseTimeline: PhaseTimelineItem[];
     previewUrl: string | undefined;
-    projectStages: any[];
+    projectStages: ProjectStage[];
     isGenerating: boolean;
     urlChatId: string | undefined;
 
     // Functions
-    updateStage: (stageId: string, updates: any) => void;
+    updateStage: (stageId: ProjectStage['id'], updates: Partial<Omit<ProjectStage, 'id'>>) => void;
     sendMessage: (message: ConversationMessage) => void;
     loadBootstrapFiles: (files: FileType[]) => void;
     onDebugMessage?: (
@@ -80,6 +92,7 @@ export interface HandleMessageDeps {
         timestamp: number;
         source?: string
     }) => void;
+    onVaultUnlockRequired?: (reason: string) => void;
 }
 
 export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
@@ -94,6 +107,10 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
         }
         return '';
     };
+
+    // Blueprint chunk parser (maintained across chunks)
+    let blueprintParser: ReturnType<typeof createRepairingJSONParser> | null = null;
+
     return (websocket: WebSocket, message: WebSocketMessage) => {
         const {
             setFiles,
@@ -127,11 +144,13 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
             projectStages,
             isGenerating,
             urlChatId,
+            behaviorType,
             updateStage,
             sendMessage,
             loadBootstrapFiles,
             onDebugMessage,
             onTerminalMessage,
+            clearDeploymentTimeout,
         } = deps;
 
         // Log messages except for frequent ones
@@ -211,18 +230,33 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                         setQuery(state.query);
                     }
 
-                    if (templateDetails?.allFiles && bootstrapFiles.length === 0) {
-                        const files = Object.entries(templateDetails.allFiles).map(([filePath, fileContents]) => ({
-                            filePath,
-                            fileContents,
-                        })).filter((file) => templateDetails.importantFiles.includes(file.filePath));
-                        logger.debug('📥 Restoring bootstrap files:', files);
-                        loadBootstrapFiles(files);
+                    if (previewUrl) {
+                        setPreviewUrl(previewUrl);
+                    }
+
+                    if (templateDetails) {
+                        // Store template details for manifest parsing and validation
+                        setTemplateDetails(templateDetails);
+                        logger.debug('📥 Stored template details:', {
+                            renderMode: templateDetails.renderMode,
+                            slideDirectory: templateDetails.slideDirectory,
+                            fileCount: Object.keys(templateDetails.allFiles || {}).length,
+                        });
+
+                        if (templateDetails.allFiles && bootstrapFiles.length === 0) {
+                            const importantFilesSet = new Set(templateDetails.importantFiles);
+                            const files = Object.entries(templateDetails.allFiles).map(([filePath, fileContents]) => ({
+                                filePath,
+                                fileContents,
+                            })).filter((file) => importantFilesSet.has(file.filePath));
+                            logger.debug('📥 Restoring bootstrap files:', files);
+                            loadBootstrapFiles(files);
+                        }
                     }
 
                     if (state.generatedFilesMap && files.length === 0) {
                         setFiles(
-                            Object.values(state.generatedFilesMap).map((file: any) => ({
+                            Object.values(state.generatedFilesMap).map((file: { filePath: string; fileContents: string }) => ({
                                 filePath: file.filePath,
                                 fileContents: file.fileContents,
                                 isGenerating: false,
@@ -233,7 +267,7 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                         );
                     }
 
-                    if (state.generatedPhases && state.generatedPhases.length > 0 && phaseTimeline.length === 0) {
+                    if (isPhasicState(state) && state.generatedPhases.length > 0 && phaseTimeline.length === 0) {
                         logger.debug('📋 Restoring phase timeline:', state.generatedPhases);
                         // If not actively generating, mark incomplete phases as cancelled (they were interrupted)
                         const isActivelyGenerating = state.shouldBeGenerating === true;
@@ -254,7 +288,7 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                                 name: phase.name,
                                 description: phase.description,
                                 status: phaseStatus,
-                                files: phase.files.map((filesConcept: any) => {
+                                files: phase.files.map(filesConcept => {
                                     const file = state.generatedFilesMap?.[filesConcept.path];
                                     // File status:
                                     // - completed if it exists in generated files
@@ -292,13 +326,60 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                         }
                     }
 
+                    // Display queued user messages from state
+                    const queuedInputs = state.pendingUserInputs || [];
+                    if (queuedInputs.length > 0) {
+                        logger.debug('📋 Restoring queued user messages:', queuedInputs);
+                        const queuedMessages: ChatMessage[] = queuedInputs.map((msg, idx) => ({
+                            role: 'user',
+                            content: msg,
+                            conversationId: `queued-${idx}`,
+                            status: 'queued' as const,
+                            queuePosition: idx + 1
+                        }));
+                        setMessages(prev => [...prev, ...queuedMessages]);
+                    }
+
                     setIsInitialStateRestored(true);
+                    
+                    if (state.shouldBeGenerating && !isGenerating) {
+                        logger.debug('🔄 Reconnected with shouldBeGenerating=true, auto-resuming generation');
+                        setIsGenerating(true); 
+                        updateStage('code', { status: 'active' });
+                        sendWebSocketMessage(websocket, 'generate_all');
+                    }
+                }
+                break;
+            }
+            case 'template_updated': {
+                const { templateDetails } = message;
+                // Update stored template details
+                setTemplateDetails(templateDetails);
+                logger.debug('📥 Template details updated:', {
+                    renderMode: templateDetails.renderMode,
+                    slideDirectory: templateDetails.slideDirectory,
+                    fileCount: Object.keys(templateDetails.allFiles || {}).length,
+                });
+
+                if (templateDetails.allFiles && bootstrapFiles.length === 0) {
+                    const importantFilesSet = new Set(templateDetails.importantFiles);
+                    const files = Object.entries(templateDetails.allFiles).map(([filePath, fileContents]) => ({
+                        filePath,
+                        fileContents,
+                    })).filter((file) => importantFilesSet.has(file.filePath));
+                    logger.debug('📥 Restoring bootstrap files:', files);
+                    loadBootstrapFiles(files);
                 }
                 break;
             }
             case 'cf_agent_state': {
                 const { state } = message;
                 logger.debug('🔄 Agent state update received:', state);
+                
+                // Sync projectType from backend if it changed
+                if (state.projectType) {
+                    setInternalProjectType(state.projectType);
+                }
 
                 // Only auto-resume if agent is fully initialized (has blueprint and template)
                 const hasBlueprint = state.blueprint && Object.keys(state.blueprint).length > 0;
@@ -477,26 +558,29 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                 break;
             }
 
-            case 'file_generating': {
-                setFiles((prev) => setFileGenerating(prev, message.filePath));
-                break;
-            }
+			case 'file_generating': {
+				setFiles((prev) => setFileGenerating(prev, message.filePath));
+				deps.onPresentationFileEvent?.({ type: 'file_generating', path: message.filePath });
+				break;
+			}
 
-            case 'file_chunk_generated': {
-                setFiles((prev) => appendFileChunk(prev, message.filePath, message.chunk));
-                break;
-            }
+			case 'file_chunk_generated': {
+				setFiles((prev) => appendFileChunk(prev, message.filePath, message.chunk));
+				deps.onPresentationFileEvent?.({ type: 'file_chunk', path: message.filePath, chunk: message.chunk });
+				break;
+			}
 
-            case 'file_generated': {
-                setFiles((prev) => setFileCompleted(prev, message.file.filePath, message.file.fileContents));
-                setPhaseTimeline((prev) => updatePhaseFileStatus(
-                    prev,
-                    message.file.filePath,
-                    'completed',
-                    message.file.fileContents
-                ));
-                break;
-            }
+			case 'file_generated': {
+				setFiles((prev) => setFileCompleted(prev, message.file.filePath, message.file.fileContents));
+				setPhaseTimeline((prev) => updatePhaseFileStatus(
+					prev,
+					message.file.filePath,
+					'completed',
+					message.file.fileContents
+				));
+				deps.onPresentationFileEvent?.({ type: 'file_generated', path: message.file.filePath, contents: message.file.fileContents });
+				break;
+			}
 
             case 'file_regenerated': {
                 setIsRedeployReady(true);
@@ -558,7 +642,7 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
 
             case 'code_reviewed': {
                 const reviewData = message.review;
-                const totalIssues = reviewData?.filesToFix?.reduce((count: number, file: any) =>
+                const totalIssues = reviewData?.filesToFix?.reduce((count: number, file: { issues: unknown[] }) =>
                     count + file.issues.length, 0) || 0;
 
                 let reviewMessage = 'Code review complete';
@@ -580,7 +664,7 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
 
                 onDebugMessage?.('error',
                     `Runtime Error (${message.count} errors)`,
-                    message.errors.map((e: any) => `${e.message}\nStack: ${e.stack || 'N/A'}`).join('\n\n'),
+                    message.errors.map((e: { message: string; stack?: string }) => `${e.message}\nStack: ${e.stack || 'N/A'}`).join('\n\n'),
                     'Runtime Detection'
                 );
                 break;
@@ -645,7 +729,7 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                             id: `${message.phase.name}-${Date.now()}`,
                             name: message.phase.name,
                             description: message.phase.description,
-                            files: message.phase.files?.map((f: any) => ({
+                            files: message.phase.files?.map((f: { path: string; purpose: string }) => ({
                                 path: f.path,
                                 purpose: f.purpose,
                                 status: 'generating' as const,
@@ -761,6 +845,7 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
             }
 
             case 'cloudflare_deployment_completed': {
+                clearDeploymentTimeout?.();
                 setIsDeploying(false);
                 setCloudflareDeploymentUrl(message.deploymentUrl);
                 setDeploymentError('');
@@ -777,6 +862,7 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
             }
 
             case 'cloudflare_deployment_error': {
+                clearDeploymentTimeout?.();
                 setIsDeploying(false);
                 setDeploymentError('Deployment failed');
                 setCloudflareDeploymentUrl('');
@@ -868,6 +954,27 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                 break;
             }
 
+            case 'blueprint_chunk': {
+                // Initialize parser on first chunk
+                if (!blueprintParser) {
+                    blueprintParser = createRepairingJSONParser();
+                    logger.debug('Blueprint streaming started');
+                }
+
+                // Feed chunk to parser
+                blueprintParser.feed(message.chunk);
+
+                // Try to parse partial blueprint
+                try {
+                    const partial = blueprintParser.finalize();
+                    setBlueprint(partial);
+                    logger.debug('Blueprint chunk processed, partial blueprint updated');
+                } catch (e) {
+                    logger.debug('Blueprint chunk accumulated, waiting for more data');
+                }
+                break;
+            }
+
             case 'terminal_output': {
                 // Handle terminal output from server
                 if (onTerminalMessage) {
@@ -893,6 +1000,24 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                         source: message.source
                     };
                     onTerminalMessage(serverLog);
+                }
+                break;
+            }
+
+            case 'vault_required': {
+                // Agent needs access to secrets but vault is locked
+                logger.info('Agent requested vault unlock:', message.reason);
+                const reason = message.reason || 'Please unlock your vault to continue';
+
+                // Trigger unlock modal via callback if available
+                if (deps.onVaultUnlockRequired) {
+                    deps.onVaultUnlockRequired(reason);
+                } else {
+                    // Fallback to toast if callback not provided
+                    toast.info('Vault unlock required', {
+                        description: reason,
+                        duration: 5000,
+                    });
                 }
                 break;
             }

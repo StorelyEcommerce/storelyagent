@@ -6,15 +6,12 @@ import {
 	useState,
 	type FormEvent,
 } from 'react';
-import { ArrowRight, Image as ImageIcon } from 'react-feather';
 import { useParams, useSearchParams, useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import { MonacoEditor } from '../../components/monaco-editor/monaco-editor';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Expand, Github, GitBranch, LoaderCircle, RefreshCw, MoreHorizontal, RotateCcw, X } from 'lucide-react';
+import { LoaderCircle, MoreHorizontal, RotateCcw } from 'lucide-react';
 import clsx from 'clsx';
-import { Blueprint } from './components/blueprint';
-import { FileExplorer } from './components/file-explorer';
 import { UserMessage, AIMessage } from './components/messages';
 import { PhaseTimeline } from './components/phase-timeline';
 import { PreviewIframe } from './components/preview-iframe';
@@ -27,20 +24,23 @@ import { useFileContentStream } from './hooks/use-file-content-stream';
 import { logger } from '@/utils/logger';
 import { useApp } from '@/hooks/use-app';
 import { useAuth } from '@/contexts/auth-context';
-import { AgentModeDisplay } from '@/components/agent-mode-display';
 import { useGitHubExport } from '@/hooks/use-github-export';
-import { GitHubExportModal } from '@/components/github-export-modal';
-import { GitCloneModal } from '@/components/shared/GitCloneModal';
-import { ModelConfigInfo } from './components/model-config-info';
 import { useAutoScroll } from '@/hooks/use-auto-scroll';
 import { useImageUpload } from '@/hooks/use-image-upload';
 import { useDragDrop } from '@/hooks/use-drag-drop';
-import { ImageAttachmentPreview } from '@/components/image-attachment-preview';
-import { createAIMessage } from './utils/message-helpers';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { sendWebSocketMessage } from './utils/websocket-helpers';
+import { detectContentType, isDocumentationPath, isMarkdownFile } from './utils/content-detector';
+import { mergeFiles } from '@/utils/file-helpers';
+import { ChatModals } from './components/chat-modals';
+import { MainContentPanel } from './components/main-content-panel';
+import { ChatInput } from './components/chat-input';
+import { useVault } from '@/hooks/use-vault';
+import { VaultUnlockModal } from '@/components/vault';
+
+const isPhasicBlueprint = (blueprint?: BlueprintType | null): blueprint is PhasicBlueprint =>
+	!!blueprint && 'implementationRoadmap' in blueprint;
 
 export default function Chat() {
 	const { chatId: urlChatId } = useParams();
@@ -101,6 +101,14 @@ export default function Chat() {
 		navigate('/');
 	}, [navigate]);
 
+	const { state: vaultState, requestUnlock, clearUnlockRequest } = useVault();
+	const handleVaultUnlockRequired = useCallback(
+		(reason: string) => {
+			requestUnlock(reason);
+		},
+		[requestUnlock],
+	);
+
 	const {
 		messages,
 		edit,
@@ -113,7 +121,6 @@ export default function Chat() {
 		totalFiles,
 		websocket,
 		sendUserMessage,
-		sendAiMessage,
 		blueprint,
 		previewUrl,
 		clearEdit,
@@ -132,11 +139,16 @@ export default function Chat() {
 		runtimeErrorCount,
 		staticIssueCount,
 		isDebugging,
+		// Behavior type from backend
+		behaviorType,
+		projectType,
+		// Template metadata
+		templateDetails,
 	} = useChat({
 		chatId: urlChatId,
 		query: userQuery,
 		images: userImages,
-		agentMode: agentMode as 'deterministic' | 'smart',
+		projectType: urlProjectType as ProjectType,
 		onDebugMessage: addDebugMessage,
 		onGuardrailRejection: handleGuardrailRejection,
 	});
@@ -146,7 +158,7 @@ export default function Chat() {
 	const { user } = useAuth();
 
 	const [activeFilePath, setActiveFilePath] = useState<string>();
-	const [view, setView] = useState<'editor' | 'preview' | 'blueprint' | 'terminal'>(
+	const [view, setView] = useState<'editor' | 'preview' | 'docs' | 'blueprint' | 'terminal' | 'presentation'>(
 		'editor',
 	);
 
@@ -159,11 +171,7 @@ export default function Chat() {
 	const [isGitCloneModalOpen, setIsGitCloneModalOpen] = useState(false);
 
 	// Model config info state
-	const [modelConfigs, setModelConfigs] = useState<{
-		agents: Array<{ key: string; name: string; description: string; }>;
-		userConfigs: ModelConfigsData['configs'];
-		defaultConfigs: ModelConfigsData['defaults'];
-	} | undefined>();
+	const [modelConfigs, setModelConfigs] = useState<ModelConfigsInfo | undefined>();
 	const [loadingConfigs, setLoadingConfigs] = useState(false);
 
 	// Handler for model config info requests
@@ -199,7 +207,51 @@ export default function Chat() {
 		};
 	}, [websocket]);
 
+	type AgentWebSocket = {
+		send: (data: string) => void;
+		readyState: number;
+		addEventListener: (type: 'open', listener: () => void) => void;
+		removeEventListener: (type: 'open', listener: () => void) => void;
+	};
+
+	const WS_OPEN = 1;
+
+	const sendVaultStatusToAgent = useCallback(
+		(ws: AgentWebSocket) => {
+			if (vaultState.status === 'unlocked') {
+				ws.send(JSON.stringify({ type: 'vault_unlocked' }));
+			} else if (vaultState.status === 'locked') {
+				ws.send(JSON.stringify({ type: 'vault_locked' }));
+			}
+		},
+		[vaultState.status],
+	);
+
+	useEffect(() => {
+		if (!websocket) return;
+
+		const ws = websocket as unknown as AgentWebSocket;
+		const handleOpen = () => sendVaultStatusToAgent(ws);
+		ws.addEventListener('open', handleOpen);
+
+		if (ws.readyState === WS_OPEN) {
+			sendVaultStatusToAgent(ws);
+		}
+
+		return () => {
+			ws.removeEventListener('open', handleOpen);
+		};
+	}, [sendVaultStatusToAgent, websocket]);
+
+	useEffect(() => {
+		if (!websocket) return;
+		const ws = websocket as unknown as AgentWebSocket;
+		if (ws.readyState !== WS_OPEN) return;
+		sendVaultStatusToAgent(ws);
+	}, [sendVaultStatusToAgent, vaultState.status, websocket]);
+
 	const hasSeenPreview = useRef(false);
+	const prevMarkdownCountRef = useRef(0);
 	const hasSwitchedFile = useRef(false);
 	// const wasChatDisabled = useRef(true);
 	// const hasShownWelcome = useRef(false);
@@ -225,11 +277,36 @@ export default function Chat() {
 	const imageInputRef = useRef<HTMLInputElement>(null);
 
 	// Fake stream bootstrap files
-	const { streamedFiles: streamedBootstrapFiles, doneStreaming } =
+	const { streamedFiles: streamedBootstrapFiles } =
 		useFileContentStream(bootstrapFiles, {
 			tps: 600,
 			enabled: isBootstrapping,
 		});
+
+	// Merge streamed bootstrap files with generated files
+	const allFiles = useMemo(() => {
+		let result: FileType[];
+
+		if (templateDetails?.allFiles) {
+			const templateFiles = Object.entries(templateDetails.allFiles).map(
+				([filePath, fileContents]) => ({
+					filePath,
+					fileContents,
+				})
+			);
+			result = mergeFiles(templateFiles, files);
+		} else {
+			result = files;
+		}
+
+		// Use feature module's processFiles if available (e.g., for presentations to filter demo slides)
+		const featureModule = featureRegistry.getModule(projectType);
+		if (featureModule?.processFiles) {
+			result = featureModule.processFiles(result, templateDetails);
+		}
+
+		return result;
+	}, [files, templateDetails, projectType]);
 
 	const handleFileClick = useCallback((file: FileType) => {
 		logger.debug('handleFileClick()', file);
@@ -242,7 +319,7 @@ export default function Chat() {
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
-	const handleViewModeChange = useCallback((mode: 'preview' | 'editor' | 'blueprint') => {
+	const handleViewModeChange = useCallback((mode: 'preview' | 'editor' | 'docs' | 'blueprint' | 'presentation') => {
 		setView(mode);
 	}, []);
 
@@ -309,7 +386,9 @@ export default function Chat() {
 			files.find((file) => file.filePath === activeFilePath) ??
 			streamedBootstrapFiles.find(
 				(file) => file.filePath === activeFilePath,
-			)
+			) ??
+			// Fallback to allFiles for template files that were merged in
+			allFiles.find((file) => file.filePath === activeFilePath)
 		);
 	}, [
 		activeFilePath,
@@ -317,6 +396,7 @@ export default function Chat() {
 		files,
 		streamedBootstrapFiles,
 		isBootstrapping,
+		allFiles,
 	]);
 
 	const isPhase1Complete = useMemo(() => {
@@ -324,16 +404,45 @@ export default function Chat() {
 	}, [phaseTimeline]);
 
 	const isGitHubExportReady = useMemo(() => {
+		if (behaviorType === 'agentic') {
+			return files.length > 0 && !!urlChatId;
+		}
 		return isPhase1Complete && !!urlChatId;
-	}, [isPhase1Complete, urlChatId]);
+	}, [behaviorType, files.length, isPhase1Complete, urlChatId]);
 
-	const showMainView = useMemo(
-		() =>
-			streamedBootstrapFiles.length > 0 ||
-			!!blueprint ||
-			files.length > 0,
-		[streamedBootstrapFiles, blueprint, files.length],
-	);
+	// Detect if agentic mode is showing static content (docs, markdown)
+	const isStaticContent = useMemo(() => {
+		if (behaviorType !== 'agentic' || files.length === 0) return false;
+		return files.every(file => isDocumentationPath(file.filePath.toLowerCase()));
+	}, [behaviorType, files]);
+
+	// Detect content type (documentation detection - works in any projectType)
+	const contentDetection = useMemo(() => {
+		return detectContentType(files);
+	}, [files]);
+
+    const hasDocumentation = useMemo(() => {
+        return Object.values(contentDetection.Contents).some(bundle => bundle.type === 'markdown');
+    }, [contentDetection]);
+
+	// Preview available based on projectType and content
+	const previewAvailable = useMemo(() => {
+		if (hasDocumentation || !!previewUrl) return true;
+		return false;
+	}, [hasDocumentation, previewUrl]);
+
+	const showMainView = useMemo(() => {
+		// For agentic mode: show preview panel when files exist or preview URL exists
+		if (behaviorType === 'agentic') {
+			const hasFiles = files.length > 0;
+			const hasPreview = !!previewUrl;
+			const result = hasFiles || hasPreview;
+			return result;
+		}
+		// For phasic mode: keep existing logic
+		const result = streamedBootstrapFiles.length > 0 || !!blueprint || files.length > 0;
+		return result;
+	}, [behaviorType, blueprint, files.length, previewUrl, streamedBootstrapFiles.length]);
 
 	const [mainMessage, ...otherMessages] = useMemo(() => messages, [messages]);
 
@@ -355,11 +464,36 @@ export default function Chat() {
 		if (shouldShowPreview) {
 			setView('preview');
 			setShowTooltip(true);
-			setTimeout(() => {
-				setShowTooltip(false);
-			}, 3000); // Auto-hide tooltip after 3 seconds
+			setTimeout(() => setShowTooltip(false), 3000);
+			hasSeenPreview.current = true;
+		} else if (isStaticContent && files.length > 0 && !hasDocumentation) {
+			// For other static content (non-documentation), show editor view
+			setView('editor');
+			// Auto-select first file if none selected
+			if (!activeFilePath) {
+				setActiveFilePath(files[0].filePath);
+			}
+			hasSeenPreview.current = true;
+		} else if (previewUrl) {
+			const isExistingChat = urlChatId !== 'new';
+			const shouldSwitch =
+				behaviorType === 'agentic' ||
+				(behaviorType === 'phasic' && isPhase1Complete) ||
+				(isExistingChat && behaviorType !== 'phasic');
+
+			if (shouldSwitch) {
+				setView('preview');
+				setShowTooltip(true);
+				setTimeout(() => {
+					setShowTooltip(false);
+				}, 3000);
+				hasSeenPreview.current = true;
+			}
 		}
-	}, [previewUrl, isPhase1Complete]);
+
+		// Update ref for next comparison
+		prevMarkdownCountRef.current = markdownFiles.length;
+	}, [previewUrl, isPhase1Complete, isStaticContent, files, activeFilePath, behaviorType, hasDocumentation, projectType, urlChatId]);
 
 	useEffect(() => {
 		if (chatId) {
@@ -393,6 +527,14 @@ export default function Chat() {
 			setActiveFilePath(files.at(-1)!.filePath);
 		}
 	}, [view, activeFile, files, isBootstrapping, streamedBootstrapFiles]);
+
+	// Preserve active file when generation completes
+	useEffect(() => {
+		if (!generatingFile && activeFile && !hasSwitchedFile.current) {
+			// Generation just ended, preserve the current active file
+			setActiveFilePath(activeFile.filePath);
+		}
+	}, [generatingFile, activeFile]);
 
 	useEffect(() => {
 		if (view !== 'blueprint' && isGeneratingBlueprint) {
@@ -486,11 +628,13 @@ export default function Chat() {
 		const completedPhases = phaseTimeline.filter(p => p.status === 'completed').length;
 
 		// Get predicted phase count from blueprint, fallback to current phase count
-		const predictedPhaseCount = blueprint?.implementationRoadmap?.length || 0;
+		const predictedPhaseCount = isPhasicBlueprint(blueprint)
+			? blueprint.implementationRoadmap.length
+			: 0;
 		const totalPhases = Math.max(predictedPhaseCount, phaseTimeline.length, 1);
 
 		return [completedPhases, totalPhases];
-	}, [phaseTimeline, blueprint?.implementationRoadmap]);
+	}, [phaseTimeline, blueprint]);
 
 	if (import.meta.env.DEV) {
 		logger.debug({
@@ -797,7 +941,7 @@ export default function Chat() {
 					</form>
 				</motion.div>
 
-				<AnimatePresence>
+				<AnimatePresence mode="wait">
 					{showMainView && (
 						<motion.div
 							layout="position"
@@ -1169,48 +1313,13 @@ export default function Chat() {
 
 			{/* Debug Panel - Removed for production */}
 
-			<AlertDialog open={isResetDialogOpen} onOpenChange={setIsResetDialogOpen}>
-				<AlertDialogContent className="sm:max-w-[425px]">
-					<AlertDialogHeader>
-						<AlertDialogTitle>Reset conversation?</AlertDialogTitle>
-						<AlertDialogDescription>
-							This will clear the chat history for this app. Generated files and preview are not affected.
-						</AlertDialogDescription>
-					</AlertDialogHeader>
-					<AlertDialogFooter>
-						<AlertDialogCancel>Cancel</AlertDialogCancel>
-						<AlertDialogAction onClick={handleResetConversation} className="bg-bg-2 hover:bg-bg-2/80 text-text-primary">
-							Reset
-						</AlertDialogAction>
-					</AlertDialogFooter>
-				</AlertDialogContent>
-			</AlertDialog>
-
-			{/* GitHub Export Modal */}
-			<GitHubExportModal
-				isOpen={githubExport.isModalOpen}
-				onClose={githubExport.closeModal}
-				onExport={githubExport.startExport}
-				isExporting={githubExport.isExporting}
-				exportProgress={githubExport.progress}
-				exportResult={githubExport.result}
-				onRetry={githubExport.retry}
-				existingGithubUrl={app?.githubRepositoryUrl || null}
-				agentId={urlChatId || undefined}
-				appTitle={app?.title}
+			<VaultUnlockModal
+				open={vaultState.unlockRequested && vaultState.status === 'locked'}
+				onOpenChange={(open) => {
+					if (!open) clearUnlockRequest();
+				}}
+				reason={vaultState.unlockReason ?? undefined}
 			/>
-
-			{/* Git Clone Modal */}
-			{urlChatId && app && (
-				<GitCloneModal
-					open={isGitCloneModalOpen}
-					onOpenChange={setIsGitCloneModalOpen}
-					appId={urlChatId}
-					appTitle={app.title || 'app'}
-					isPublic={app.visibility === 'public'}
-					isOwner={app.user?.id === user?.id}
-				/>
-			)}
 		</div>
 	);
 }

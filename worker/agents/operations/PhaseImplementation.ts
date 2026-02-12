@@ -1,14 +1,11 @@
-import { PhaseConceptType, FileOutputType, PhaseConceptSchema } from '../schemas';
+import { PhaseConceptType, FileOutputType } from '../schemas';
 import { IssueReport } from '../domain/values/IssueReport';
 import { createUserMessage, createMultiModalUserMessage } from '../inferutils/common';
 import { executeInference } from '../inferutils/infer';
-import { issuesPromptFormatter, PROMPT_UTILS, STRATEGIES } from '../prompts';
 import { CodeGenerationStreamingState } from '../output-formats/streaming-formats/base';
 import { FileProcessing } from '../domain/pure/FileProcessing';
-// import { RealtimeCodeFixer } from '../assistants/realtimeCodeFixer';
 import { AgentOperation, getSystemPromptWithProjectContext, OperationOptions } from '../operations/common';
 import { SCOFFormat, SCOFParsingState } from '../output-formats/streaming-formats/scof';
-import { TemplateRegistry } from '../inferutils/schemaFormatters';
 import { IsRealtimeCodeFixerEnabled, RealtimeCodeFixer } from '../assistants/realtimeCodeFixer';
 import { CodeSerializerType } from '../utils/codeSerializers';
 import type { UserContext } from '../core/types';
@@ -490,7 +487,7 @@ const userPromptFormatter = (phaseConcept: PhaseConceptType, issues: IssueReport
 export class PhaseImplementationOperation extends AgentOperation<PhaseImplementationInputs, PhaseImplementationOutputs> {
     async execute(
         inputs: PhaseImplementationInputs,
-        options: OperationOptions
+        options: OperationOptions<PhasicGenerationContext>
     ): Promise<PhaseImplementationOutputs> {
         const { phase, issues, userContext, manusConfig } = inputs;
         const { env, logger, context } = options;
@@ -507,11 +504,12 @@ export class PhaseImplementationOperation extends AgentOperation<PhaseImplementa
 
         // Notify phase start
         const codeGenerationFormat = new SCOFFormat();
+
         // Build messages for generation
         const messages = getSystemPromptWithProjectContext(SYSTEM_PROMPT, context, CodeSerializerType.SCOF);
 
         // Create user message with optional images
-        const userPrompt = userPromptFormatter(phase, issues, userContext?.suggestions) + codeGenerationFormat.formatInstructions();
+        const userPrompt = buildPhaseImplementationUserPrompt({ phase, issues, userContext }) + codeGenerationFormat.formatInstructions();
         const userMessage = userContext?.images && userContext.images.length > 0
             ? createMultiModalUserMessage(
                 userPrompt,
@@ -588,7 +586,6 @@ export class PhaseImplementationOperation extends AgentOperation<PhaseImplementa
                                 const fixPromise = realtimeCodeFixer.run(
                                     generatedFile,
                                     {
-                                        // previousFiles: previousFiles,
                                         query: context.query,
                                         template: context.templateDetails
                                     },
@@ -606,8 +603,6 @@ export class PhaseImplementationOperation extends AgentOperation<PhaseImplementa
             }
         });
 
-        // // Extract commands from the generated files
-        // const commands = extractCommands(results.string, true);
         const commands = streamingState.parsingState.extractedInstallCommands;
 
         logger.info("Files generated for phase:", phase.name, "with", fixedFilePromises.length, "files being fixed in real-time and extracted install commands:", commands);
