@@ -50,6 +50,7 @@ export interface StreamEvent {
 }
 
 const templateDetailsCache: Record<string, TemplateDetails> = {};
+const ONLY_ALLOWED_TEMPLATE = 'base-store';
   
 /**
  * Abstract base class providing complete RunnerService API compatibility
@@ -84,8 +85,8 @@ export abstract class BaseSandboxService {
             
             const templates = await response.json() as TemplateInfo[];
 
-            // For now, just filter out *next* templates
-            const filteredTemplates = templates.filter(t => !t.name.includes('next'));
+            // Storely restriction: expose only the base-store template.
+            const filteredTemplates = templates.filter((t) => t.name === ONLY_ALLOWED_TEMPLATE);
 
             return {
                 success: true,

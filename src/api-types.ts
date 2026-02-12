@@ -48,6 +48,14 @@ export type {
   DomainConnectData,
 } from 'worker/api/controllers/domain/types';
 
+// Stripe Connect API Types
+export type {
+  StripeConnectStatusData,
+  StripeConnectInitiateData,
+  StripeConnectDashboardData,
+  StripeConnectDisconnectData,
+} from 'worker/api/controllers/stripe/types';
+
 // User-related API Types
 export type {
   UserAppsData,

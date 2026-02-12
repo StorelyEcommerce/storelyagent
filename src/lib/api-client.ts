@@ -60,6 +60,10 @@ import type{
 		UserDomainData,
 		DomainCheckData,
 		DomainConnectData,
+		StripeConnectStatusData,
+		StripeConnectInitiateData,
+		StripeConnectDashboardData,
+		StripeConnectDisconnectData,
 	} from '@/api-types';
 import {
 	RateLimitExceededError,
@@ -898,6 +902,47 @@ class ApiClient {
 	 */
 	async getSecretTemplates(): Promise<ApiResponse<SecretTemplatesData>> {
 		return this.request<SecretTemplatesData>('/api/secrets/templates');
+	}
+
+	/**
+	 * Get Stripe Connect status for the current user
+	 */
+	async getStripeConnectStatus(): Promise<ApiResponse<StripeConnectStatusData>> {
+		return this.request<StripeConnectStatusData>('/api/stripe/connect/status');
+	}
+
+	/**
+	 * Initiate Stripe Connect onboarding
+	 */
+	async initiateStripeConnect(): Promise<ApiResponse<StripeConnectInitiateData>> {
+		return this.request<StripeConnectInitiateData>('/api/stripe/connect/initiate', {
+			method: 'POST',
+		});
+	}
+
+	/**
+	 * Refresh Stripe Connect status after onboarding redirect
+	 */
+	async refreshStripeConnectStatus(): Promise<ApiResponse<StripeConnectStatusData>> {
+		return this.request<StripeConnectStatusData>('/api/stripe/connect/refresh', {
+			method: 'POST',
+		});
+	}
+
+	/**
+	 * Get Stripe dashboard login link
+	 */
+	async getStripeDashboardLink(): Promise<ApiResponse<StripeConnectDashboardData>> {
+		return this.request<StripeConnectDashboardData>('/api/stripe/connect/dashboard');
+	}
+
+	/**
+	 * Disconnect Stripe account
+	 */
+	async disconnectStripe(): Promise<ApiResponse<StripeConnectDisconnectData>> {
+		return this.request<StripeConnectDisconnectData>('/api/stripe/connect', {
+			method: 'DELETE',
+		});
 	}
 
 	// ===============================

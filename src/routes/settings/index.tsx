@@ -55,6 +55,8 @@ import {
 import { toast } from 'sonner';
 import { apiClient } from '@/lib/api-client';
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
+import { StripeConnectCard } from '@/components/stripe-connect-card';
+import { DomainSettingsCard } from '@/components/domain-settings-card';
 // import { SecretsManager } from '@/components/vault';
 
 export default function SettingsPage() {
@@ -436,6 +438,10 @@ export default function SettingsPage() {
 							Manage your account settings and preferences
 						</p>
 					</div>
+
+					<StripeConnectCard />
+
+					<DomainSettingsCard />
 
 					{/* Integrations Section */}
 					{/* <Card id="integrations">

@@ -9,6 +9,7 @@ import Settings from './routes/settings/index';
 import AppsPage from './routes/apps';
 import AppView from './routes/app';
 import DiscoverPage from './routes/discover';
+import AdminDashboard from './routes/admin';
 import { ProtectedRoute } from './routes/protected-route';
 
 const routes = [
@@ -43,6 +44,10 @@ const routes = [
 			{
 				path: 'discover',
 				Component: DiscoverPage,
+			},
+			{
+				path: 'admin',
+				element: React.createElement(ProtectedRoute, { children: React.createElement(AdminDashboard) }),
 			},
 		],
 	},
