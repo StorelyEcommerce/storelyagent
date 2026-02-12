@@ -155,8 +155,9 @@ export const apps = sqliteTable('apps', {
     // Status and State
     status: text('status', { enum: ['generating', 'completed'] }).notNull().default('generating'),
     
-    // Deployment Information
-    deploymentId: text('deployment_id'), // Deployment ID (extracted from deployment URL)
+	// Deployment Information
+	deploymentId: text('deployment_id'), // Deployment ID (extracted from deployment URL)
+	customSubdomain: text('custom_subdomain'), // User-chosen subdomain (e.g., "my-shop" for my-shop.storelyshop.com)
     
     // GitHub Repository Integration
     githubRepositoryUrl: text('github_repository_url'), // GitHub repository URL
@@ -188,8 +189,9 @@ export const apps = sqliteTable('apps', {
     searchIdx: index('apps_search_idx').on(table.title, table.description),
     frameworkStatusIdx: index('apps_framework_status_idx').on(table.framework, table.status),
     visibilityStatusIdx: index('apps_visibility_status_idx').on(table.visibility, table.status),
-    createdAtIdx: index('apps_created_at_idx').on(table.createdAt),
-    updatedAtIdx: index('apps_updated_at_idx').on(table.updatedAt),
+	createdAtIdx: index('apps_created_at_idx').on(table.createdAt),
+	updatedAtIdx: index('apps_updated_at_idx').on(table.updatedAt),
+	customSubdomainIdx: uniqueIndex('apps_custom_subdomain_idx').on(table.customSubdomain),
 }));
 
 /**
@@ -514,6 +516,24 @@ export const systemSettings = sqliteTable('system_settings', {
     keyIdx: uniqueIndex('system_settings_key_idx').on(table.key),
 }));
 
+/**
+ * User Domains table - stores user-owned custom domains and linked apps
+ */
+export const userDomains = sqliteTable('user_domains', {
+	id: text('id').primaryKey(),
+	userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+	domain: text('domain').notNull().unique(),
+	appId: text('app_id').references(() => apps.id, { onDelete: 'set null' }),
+	status: text('status', { enum: ['pending', 'verified', 'active', 'expired'] }).notNull().default('pending'),
+	createdAt: integer('created_at', { mode: 'timestamp' }).default(sql`CURRENT_TIMESTAMP`),
+	updatedAt: integer('updated_at', { mode: 'timestamp' }).default(sql`CURRENT_TIMESTAMP`),
+}, (table) => ({
+	userIdx: index('user_domains_user_idx').on(table.userId),
+	domainIdx: uniqueIndex('user_domains_domain_idx').on(table.domain),
+	appIdx: index('user_domains_app_idx').on(table.appId),
+	statusIdx: index('user_domains_status_idx').on(table.status),
+}));
+
 // ========================================
 // TYPE EXPORTS FOR APPLICATION USE
 // ========================================
@@ -570,3 +590,6 @@ export type NewUserModelProvider = typeof userModelProviders.$inferInsert;
 
 export type Star = typeof stars.$inferSelect;
 export type NewStar = typeof stars.$inferInsert;
+
+export type UserDomain = typeof userDomains.$inferSelect;
+export type NewUserDomain = typeof userDomains.$inferInsert;

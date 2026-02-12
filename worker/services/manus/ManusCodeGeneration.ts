@@ -12,8 +12,6 @@ import {
     ManusCodeGenerationResult,
     ManusGeneratedFile,
     ManusTaskOutput,
-    ManusOutputContent,
-    ManusAttachment,
 } from './ManusTypes';
 
 const logger = createLogger('ManusCodeGeneration');

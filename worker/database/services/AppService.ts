@@ -248,14 +248,61 @@ export class AppService extends BaseService {
     /**
      * Update app deployment ID
      */
-    async updateDeploymentId(
-        appId: string,
-        deploymentId: string,
-    ): Promise<boolean> {
-        return this.updateApp(appId, {
-            deploymentId,
-        });
-    }
+	async updateDeploymentId(
+		appId: string,
+		deploymentId: string,
+	): Promise<boolean> {
+		return this.updateApp(appId, {
+			deploymentId,
+		});
+	}
+
+	/**
+	 * Check if a custom subdomain is available.
+	 */
+	async isSubdomainAvailable(subdomain: string): Promise<boolean> {
+		const normalized = subdomain.toLowerCase();
+		const existing = await this.getReadDb('fast')
+			.select({ id: schema.apps.id })
+			.from(schema.apps)
+			.where(eq(schema.apps.customSubdomain, normalized))
+			.get();
+
+		return !existing;
+	}
+
+	/**
+	 * Update custom subdomain for an app owned by the user.
+	 */
+	async updateSubdomain(
+		appId: string,
+		userId: string,
+		subdomain: string,
+	): Promise<{ success: boolean; error?: string }> {
+		const ownership = await this.checkAppOwnership(appId, userId);
+		if (!ownership.exists) {
+			return { success: false, error: 'App not found' };
+		}
+		if (!ownership.isOwner) {
+			return { success: false, error: 'You do not own this app' };
+		}
+
+		const normalized = subdomain.toLowerCase();
+		const available = await this.isSubdomainAvailable(normalized);
+		if (!available) {
+			return { success: false, error: 'Subdomain is already taken' };
+		}
+
+		await this.database
+			.update(schema.apps)
+			.set({
+				customSubdomain: normalized,
+				updatedAt: new Date(),
+			})
+			.where(eq(schema.apps.id, appId));
+
+		return { success: true };
+	}
 
     /**
      * Update app with GitHub repository URL and visibility

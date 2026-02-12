@@ -12,6 +12,7 @@ import {
 	// LayoutGrid,
 	Compass,
 	LayoutDashboard,
+	BookOpen,
 } from 'lucide-react';
 import './sidebar-overrides.css';
 import { useRecentApps, useFavoriteApps, useApps } from '@/hooks/use-apps';
@@ -263,7 +264,7 @@ export function AppSidebar() {
 										<div className="relative bg-bg-3 mb-4 mt-2">
 											<Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-text-tertiary" />
 											<Input
-												placeholder="Search apps..."
+												placeholder="Search stores..."
 												value={searchQuery}
 												onChange={(e) =>
 													setSearchQuery(
@@ -335,7 +336,7 @@ export function AppSidebar() {
 														<SidebarMenuItem>
 															<div className="flex items-center justify-center py-4">
 																<div className="text-sm text-text-tertiary">
-																	No apps
+																	No stores
 																	found for "
 																	{
 																		searchQuery
@@ -376,14 +377,14 @@ export function AppSidebar() {
 																		'/apps',
 																	)
 																}
-																tooltip="View all apps"
+																tooltip="View all stores"
 																className="text-text-tertiary hover:text-text-primary view-all-button"
 															>
 																<ChevronRight className="h-4 w-4" />
 																{!isCollapsed && (
 																	<span className="font-medium text-text-primary/80">
 																		View all
-																		apps →
+																		stores →
 																	</span>
 																)}
 															</SidebarMenuButton>
@@ -532,7 +533,7 @@ export function AppSidebar() {
 																			{
 																				board.appCount
 																			}{' '}
-																			apps
+																			stores
 																		</p>
 																	</div>
 																)}
@@ -597,6 +598,21 @@ export function AppSidebar() {
 									{!isCollapsed && (
 										<span className="text-text-primary/80 font-medium group-hover:text-primary transition-colors">
 											Store Admin
+										</span>
+									)}
+								</SidebarMenuButton>
+							</SidebarMenuItem>
+							<SidebarMenuItem>
+								<SidebarMenuButton
+									id="docs-link"
+									onClick={() => navigate('/docs')}
+									tooltip="Documentation"
+									className="group hover:opacity-80 hover:cursor-pointer hover:bg-bg-1/50 transition-all duration-200"
+								>
+									<BookOpen className="h-6 w-6 text-text-primary/60 group-hover:text-primary/80 transition-colors" />
+									{!isCollapsed && (
+										<span className="text-text-primary/80 font-medium group-hover:text-primary transition-colors">
+											Docs
 										</span>
 									)}
 								</SidebarMenuButton>

@@ -66,34 +66,6 @@ Cloudflare VibeSDK Build utilizes the full Cloudflare developer ecosystem:
 - **Storage**: R2 buckets for templates, KV for sessions
 - **Deployment**: Workers for Platforms with dispatch namespaces
 
-### SDK for Programmatic Access
-
-Build apps programmatically using the official TypeScript SDK:
-
-```bash
-npm install @cf-vibesdk/sdk
-```
-
-```ts
-import { PhasicClient } from '@cf-vibesdk/sdk';
-
-const client = new PhasicClient({
-  baseUrl: 'https://build.cloudflare.dev',
-  apiKey: process.env.VIBESDK_API_KEY!,
-});
-
-const session = await client.build('Build a simple hello world page.', {
-  projectType: 'app',
-  autoGenerate: true,
-});
-
-await session.wait.deployable();
-console.log('Preview URL:', session.state.previewUrl);
-session.close();
-```
-
-**[SDK Documentation](sdk/README.md)** - Full API reference and examples
-
 ## 📋 Quick Deploy Checklist
 
 Before clicking "Deploy to Cloudflare", have these ready:
@@ -361,52 +333,11 @@ The setup script will guide you through:
 
 After setup, start the development server:
 
-#### Required for Manual Deployment
-
-If you're deploying manually using `bun run deploy`, you **must** set these environment variables:
-
-**Cloudflare API Token & Account ID:**
-
-1. **Get your Account ID**:
-   - Go to [Cloudflare Dashboard -> Workers and Pages](https://dash.cloudflare.com/?to=/:account/workers-and-pages)
-   - Copy your Account ID from the right sidebar or URL
-
-2. **Create an API Token**:
-   - Go to [Cloudflare Dashboard -> API Tokens](https://dash.cloudflare.com/?to=/:account/api-tokens)
-   - Click "Create Token" → Use custom token
-   - Configure with these **minimum required permissions**:
-     - **Account** → **Containers** → **Edit**
-     - **Account** → **Secrets Store** → **Edit**
-     - **Account** → **D1** → **Edit**
-     - **Account** → **Workers R2 Storage** → **Edit**
-     - **Account** → **Workers KV Storage** → **Edit**
-     - **Account** → **Workers Scripts** → **Edit**
-     - **Account** → **Account Settings** → **Read**
-     - **Zone** → **Workers Routes** → **Edit**
-   - Under "Zone Resources": Select "All zones from an account" → Choose your account
-   - Click "Continue to summary" → "Create Token"
-   - Copy the token immediately (you won't see it again)
-
-3. **Set the environment variables**:
-   ```bash
-   export CLOUDFLARE_API_TOKEN="your-api-token-here"
-   export CLOUDFLARE_ACCOUNT_ID="your-account-id-here"
-   ```
-
-> **Note**: These credentials are automatically provided when using the "Deploy to Cloudflare" button, but are required for manual `bun run deploy`.
-
-**For Local Development (.dev.vars):**
 ```bash
 bun run dev
 ```
 
 Visit `http://localhost:5173` to access VibSDK locally.
-
-**For Production Deployment (.prod.vars):**
-```bash
-cp .dev.vars.example .prod.vars
-# Edit .prod.vars with your production API keys and tokens
-```
 
 ### Production Deployment
 

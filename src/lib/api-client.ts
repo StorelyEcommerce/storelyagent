@@ -55,9 +55,12 @@ import type{
 	PlatformStatusData,
 	RateLimitError,
 	CapabilitiesData,
-	VaultConfigResponse,
-	VaultStatusResponse,
-} from '@/api-types';
+		VaultConfigResponse,
+		VaultStatusResponse,
+		UserDomainData,
+		DomainCheckData,
+		DomainConnectData,
+	} from '@/api-types';
 import {
 	RateLimitExceededError,
 	SecurityError,
@@ -1084,6 +1087,50 @@ class ApiClient {
 				method: 'DELETE',
 			},
 		);
+	}
+
+	// ===============================
+	// Domain API Methods
+	// ===============================
+
+	async getUserDomains(): Promise<ApiResponse<{ domains: UserDomainData[] }>> {
+		return this.request<{ domains: UserDomainData[] }>('/api/domain/mine');
+	}
+
+	async checkDomainAvailability(domain: string): Promise<ApiResponse<DomainCheckData>> {
+		const encodedDomain = encodeURIComponent(domain);
+		return this.request<DomainCheckData>(`/api/domain/check?domain=${encodedDomain}`);
+	}
+
+	async getDomainPurchaseUrl(domain: string): Promise<ApiResponse<{ domain: string; url: string }>> {
+		const encodedDomain = encodeURIComponent(domain);
+		return this.request<{ domain: string; url: string }>(`/api/domain/purchase-url?domain=${encodedDomain}`);
+	}
+
+	async connectDomain(domain: string, appId: string): Promise<ApiResponse<DomainConnectData>> {
+		return this.request<DomainConnectData>('/api/domain/connect', {
+			method: 'POST',
+			body: { domain, appId },
+		});
+	}
+
+	async linkDomainToStore(domainId: string, appId: string): Promise<ApiResponse<{ success: boolean; domain: UserDomainData }>> {
+		return this.request<{ success: boolean; domain: UserDomainData }>(`/api/domain/${domainId}/link`, {
+			method: 'POST',
+			body: { appId },
+		});
+	}
+
+	async unlinkDomainFromStore(domainId: string): Promise<ApiResponse<{ success: boolean; domain: UserDomainData }>> {
+		return this.request<{ success: boolean; domain: UserDomainData }>(`/api/domain/${domainId}/link`, {
+			method: 'DELETE',
+		});
+	}
+
+	async deleteDomain(domainId: string): Promise<ApiResponse<{ success: boolean }>> {
+		return this.request<{ success: boolean }>(`/api/domain/${domainId}`, {
+			method: 'DELETE',
+		});
 	}
 
 	// ===============================

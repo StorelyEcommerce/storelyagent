@@ -53,7 +53,7 @@ export class DomainController extends BaseController {
             const data: DomainCheckData = {
                 domain: result.domain,
                 available: result.available,
-                suggestions: suggestions.map(s => ({ domain: s, available: false })), // Suggestions don't have availability checked
+                suggestions: suggestions.map((s: string) => ({ domain: s, available: false })), // Suggestions don't have availability checked
                 purchaseUrl: result.available ? domainService.getPurchaseUrl(result.domain) : undefined,
                 error: result.error,
             };
@@ -123,7 +123,7 @@ export class DomainController extends BaseController {
             const domains = await domainDbService.getByUserId(user.id);
 
             const data: UserDomainsListData = {
-                domains: domains.map(d => ({
+                domains: domains.map((d) => ({
                     id: d.id,
                     domain: d.domain,
                     status: d.status as 'pending' | 'verified' | 'active' | 'expired',

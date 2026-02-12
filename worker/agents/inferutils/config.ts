@@ -107,13 +107,20 @@ const PLATFORM_AGENT_CONFIG: AgentConfig = {
         temperature: 0.0,
         fallbackModel: AIModels.GROK_CODE_FAST_1,
     },
-    agenticProjectBuilder: {
-        name: AIModels.GEMINI_3_FLASH_PREVIEW,
-        reasoning_effort: 'medium',
-        max_tokens: 8000,
-        temperature: 1,
-        fallbackModel: AIModels.GEMINI_2_5_PRO,
-    },
+	agenticProjectBuilder: {
+		name: AIModels.GEMINI_3_FLASH_PREVIEW,
+		reasoning_effort: 'medium',
+		max_tokens: 8000,
+		temperature: 1,
+		fallbackModel: AIModels.GEMINI_2_5_PRO,
+	},
+	guardrailCheck: {
+		name: AIModels.CLAUDE_4_5_HAIKU,
+		reasoning_effort: 'low',
+		max_tokens: 1000,
+		temperature: 0,
+		fallbackModel: AIModels.GEMINI_2_5_FLASH_LITE,
+	},
 };
 
 //======================================================================================
@@ -172,13 +179,20 @@ const DEFAULT_AGENT_CONFIG: AgentConfig = {
         temperature: 1,
         fallbackModel: AIModels.GEMINI_2_5_FLASH,
     },
-    agenticProjectBuilder: {
-        name: AIModels.GEMINI_3_FLASH_PREVIEW,
-        reasoning_effort: 'high',
-        max_tokens: 8000,
-        temperature: 1,
-        fallbackModel: AIModels.GEMINI_2_5_FLASH,
-    },
+	agenticProjectBuilder: {
+		name: AIModels.GEMINI_3_FLASH_PREVIEW,
+		reasoning_effort: 'high',
+		max_tokens: 8000,
+		temperature: 1,
+		fallbackModel: AIModels.GEMINI_2_5_FLASH,
+	},
+	guardrailCheck: {
+		name: AIModels.CLAUDE_4_5_HAIKU,
+		reasoning_effort: 'low',
+		max_tokens: 1000,
+		temperature: 0,
+		fallbackModel: AIModels.GEMINI_2_5_FLASH_LITE,
+	},
 };
 
 export const AGENT_CONFIG: AgentConfig = env.PLATFORM_MODEL_PROVIDERS 

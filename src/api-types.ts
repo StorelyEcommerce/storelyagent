@@ -41,6 +41,13 @@ export type {
   GitCloneTokenData
 } from 'worker/api/controllers/appView/types';
 
+// Domain API Types
+export type {
+  UserDomainData,
+  DomainCheckData,
+  DomainConnectData,
+} from 'worker/api/controllers/domain/types';
+
 // User-related API Types
 export type {
   UserAppsData,

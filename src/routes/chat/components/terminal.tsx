@@ -22,16 +22,16 @@ interface TerminalProps {
 	onCopyLogs?: () => void;
 }
 
-export function Terminal({ 
-	logs, 
-	onCommand, 
-	isConnected, 
-	className 
+export function Terminal({
+	logs,
+	onCommand,
+	isConnected,
+	className
 }: TerminalProps) {
 	const [command, setCommand] = useState('');
 	const [commandHistory, setCommandHistory] = useState<string[]>([]);
 	const [historyIndex, setHistoryIndex] = useState(-1);
-	
+
 	const inputRef = useRef<HTMLInputElement>(null);
 	const scrollAreaRef = useRef<HTMLDivElement>(null);
 	const endOfLogsRef = useRef<HTMLDivElement>(null);
@@ -56,7 +56,7 @@ export function Terminal({
 		// Add to command history
 		setCommandHistory(prev => [...prev.slice(-49), cmd]); // Keep last 50 commands
 		setHistoryIndex(-1);
-		
+
 		// Send command
 		onCommand(cmd.trim());
 		setCommand('');
@@ -69,8 +69,8 @@ export function Terminal({
 		} else if (e.key === 'ArrowUp') {
 			e.preventDefault();
 			if (commandHistory.length > 0) {
-				const newIndex = historyIndex === -1 
-					? commandHistory.length - 1 
+				const newIndex = historyIndex === -1
+					? commandHistory.length - 1
 					: Math.max(0, historyIndex - 1);
 				setHistoryIndex(newIndex);
 				setCommand(commandHistory[newIndex]);
@@ -96,7 +96,7 @@ export function Terminal({
 	const getLogTypeColor = (type: TerminalLog['type']) => {
 		switch (type) {
 			case 'command':
-				return 'text-[#f6821f] dark:text-[#f6821f]'; // Cloudflare orange
+				return 'text-[#0EA5E9] dark:text-[#0EA5E9]'; // Storely teal
 			case 'stdout':
 				return 'text-green-600 dark:text-green-400';
 			case 'stderr':
@@ -122,7 +122,7 @@ export function Terminal({
 
 			{/* Terminal Output */}
 			<div className="flex-1 min-h-0 overflow-hidden bg-gray-25 dark:bg-[#1d1e1e]">
-				<ScrollArea 
+				<ScrollArea
 					ref={scrollAreaRef}
 					className="h-full terminal-scroll"
 				>
@@ -166,7 +166,7 @@ export function Terminal({
 											getLogTypeColor(log.type)
 										)}>
 											{log.type === 'command' && (
-												<span className="text-[#f6821f] font-semibold mr-1">$</span>
+												<span className="text-[#0EA5E9] font-semibold mr-1">$</span>
 											)}
 											{log.type === 'stderr' && (
 												<span className="text-red-500 dark:text-red-400 mr-1">❌</span>
@@ -204,8 +204,8 @@ export function Terminal({
 					<div className="flex items-center gap-2">
 						<span className={clsx(
 							"text-lg font-bold select-none",
-							isConnected 
-								? "text-[#f6821f]" 
+							isConnected
+								? "text-[#0EA5E9]"
 								: "text-gray-400 dark:text-gray-600"
 						)}>
 							$
@@ -232,7 +232,7 @@ export function Terminal({
 						{isConnected ? (
 							<div className="flex items-center gap-4">
 								<span className="flex items-center gap-1">
-									Press 
+									Press
 									<kbd className="px-1.5 py-0.5 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded text-xs font-mono">↑</kbd>
 									<kbd className="px-1.5 py-0.5 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded text-xs font-mono">↓</kbd>
 									for history
