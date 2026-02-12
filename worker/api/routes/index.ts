@@ -3,7 +3,7 @@ import { setupAppRoutes } from './appRoutes';
 import { setupUserRoutes } from './userRoutes';
 import { setupStatsRoutes } from './statsRoutes';
 import { setupAnalyticsRoutes } from './analyticsRoutes';
-// import { setupUserSecretsRoutes } from './userSecretsRoutes';
+import { setupSecretsRoutes } from './secretsRoutes';
 import { setupModelConfigRoutes } from './modelConfigRoutes';
 import { setupModelProviderRoutes } from './modelProviderRoutes';
 import { setupGitHubExporterRoutes } from './githubExporterRoutes';
@@ -27,9 +27,6 @@ export function setupRoutes(app: Hono<AppEnv>): void {
 
     // Platform status routes (public)
     setupStatusRoutes(app);
-
-    // Platform capabilities routes (public)
-    setupCapabilitiesRoutes(app);
 
     // Authentication and user management routes
     setupAuthRoutes(app);

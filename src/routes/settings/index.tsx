@@ -255,6 +255,10 @@ export default function SettingsPage() {
 						</p>
 					</div>
 
+					<StripeConnectCard />
+
+					<DomainSettingsCard />
+
 					{/* Integrations Section */}
 					{/* <Card id="integrations">
 						<CardHeader variant="minimal">

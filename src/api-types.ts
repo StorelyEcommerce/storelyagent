@@ -40,7 +40,6 @@ export type {
   GeneratedCodeFile,
   GitCloneTokenData
 } from 'worker/api/controllers/appView/types';
-
 // User-related API Types
 export type {
   UserAppsData,

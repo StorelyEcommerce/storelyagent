@@ -142,7 +142,7 @@
 		}
 	],
 	"vars": {
-		"TEMPLATES_REPOSITORY": "https://github.com/StorelyEcommerce/store-template",
+		"TEMPLATES_REPOSITORY": "https://github.com/StorelyEcommerce/base-store",
 		"ALLOWED_EMAIL": "jayyala@gmail.com,jacques.attinger@gmail.com",
 		"DISPATCH_NAMESPACE": "vibesdk-default-namespace",
 		"ENABLE_READ_REPLICAS": "true",

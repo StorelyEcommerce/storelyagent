@@ -538,6 +538,28 @@ export const userModelProviders = sqliteTable('user_model_providers', {
     isActiveIdx: index('user_model_providers_is_active_idx').on(table.isActive),
 }));
 
+/**
+ * Stripe Connect Accounts table - stores connected Stripe Express accounts
+ */
+export const stripeConnectAccounts = sqliteTable('stripe_connect_accounts', {
+	id: text('id').primaryKey(),
+	userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+	stripeAccountId: text('stripe_account_id').notNull().unique(),
+	accountStatus: text('account_status', { enum: ['pending', 'active', 'restricted', 'disabled'] }).notNull().default('pending'),
+	chargesEnabled: integer('charges_enabled', { mode: 'boolean' }).default(false),
+	payoutsEnabled: integer('payouts_enabled', { mode: 'boolean' }).default(false),
+	detailsSubmitted: integer('details_submitted', { mode: 'boolean' }).default(false),
+	defaultCurrency: text('default_currency'),
+	country: text('country'),
+	businessProfile: text('business_profile', { mode: 'json' }),
+	createdAt: integer('created_at', { mode: 'timestamp' }).default(sql`CURRENT_TIMESTAMP`),
+	updatedAt: integer('updated_at', { mode: 'timestamp' }).default(sql`CURRENT_TIMESTAMP`),
+}, (table) => ({
+	userIdx: uniqueIndex('stripe_connect_user_idx').on(table.userId),
+	stripeAccountIdx: uniqueIndex('stripe_connect_account_idx').on(table.stripeAccountId),
+	statusIdx: index('stripe_connect_status_idx').on(table.accountStatus),
+}));
+
 // ========================================
 // STRIPE CONNECT INTEGRATION
 // ========================================
@@ -675,6 +697,8 @@ export type UserModelConfig = typeof userModelConfigs.$inferSelect;
 export type NewUserModelConfig = typeof userModelConfigs.$inferInsert;
 export type UserModelProvider = typeof userModelProviders.$inferSelect;
 export type NewUserModelProvider = typeof userModelProviders.$inferInsert;
+export type StripeConnectAccount = typeof stripeConnectAccounts.$inferSelect;
+export type NewStripeConnectAccount = typeof stripeConnectAccounts.$inferInsert;
 
 export type Star = typeof stars.$inferSelect;
 export type NewStar = typeof stars.$inferInsert;

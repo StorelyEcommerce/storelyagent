@@ -60,6 +60,7 @@ export interface TemplateInfo {
 }
 
 const templateDetailsCache: Record<string, TemplateDetails> = {};
+const ONLY_ALLOWED_TEMPLATE = 'base-store';
 
 /**
  * Clear the template details cache. Call this when templates are updated in R2.
@@ -75,7 +76,6 @@ export function clearTemplateCache(templateName?: string) {
         console.log('All template caches cleared');
     }
 }
-
 /**
  * Abstract base class providing complete RunnerService API compatibility
  * All implementations MUST support every method defined here
@@ -109,8 +109,8 @@ export abstract class BaseSandboxService {
 
             const templates = await response.json() as TemplateInfo[];
 
-            // For now, just filter out *next* templates
-            const filteredTemplates = templates.filter(t => !t.name.includes('next'));
+            // Storely restriction: expose only the base-store template.
+            const filteredTemplates = templates.filter((t) => t.name === ONLY_ALLOWED_TEMPLATE);
 
             return {
                 success: true,
