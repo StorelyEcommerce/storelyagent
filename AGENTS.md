@@ -39,3 +39,8 @@
 
 ## Agent-Specific Notes
 - See `CLAUDE.md` for strict type-safety and architecture rules used by automation and contributors.
+
+## Storely Product (High-Level)
+- Storely is a vibe-coding platform focused on ecommerce websites.
+- Users describe the store they want, and the platform generates, previews, and deploys production-ready storefronts.
+- Core Storely scope includes storefront generation, store admin workflows, custom domains, and Stripe payment connectivity.

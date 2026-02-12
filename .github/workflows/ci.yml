@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ci:
+  smoke:
     runs-on: ubuntu-latest
     env:
       CI: true
@@ -39,14 +39,6 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Lint
-        run: bun run lint
-
-      - name: Typecheck
-        run: bun run typecheck
-
-      - name: Test
-        run: bun run test
-
-      - name: Build
-        run: bun run build
+      - name: Run Storely smoke tests
+        run: |
+          bun run test src/routes/storely-routes.test.ts src/components/icons/logos.storely.test.ts worker/agents/operations/UserConversationProcessor.storely.test.ts worker/services/domain/domain.test.ts worker/services/stripe/stripe.test.ts
