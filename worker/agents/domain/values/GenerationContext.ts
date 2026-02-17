@@ -1,6 +1,6 @@
 import { Blueprint, DesignDNA } from '../../schemas';
 import { FileTreeNode, TemplateDetails } from '../../../services/sandbox/sandboxTypes';
-import { CodeGenState, FileState, PhaseState } from '../../core/state';
+import { BaseProjectState, CodeGenState, FileState, PhaseState } from '../../core/state';
 import { DependencyManagement } from '../pure/DependencyManagement';
 import type { StructuredLogger } from '../../../logger';
 import { FileProcessing } from '../pure/FileProcessing';
@@ -14,6 +14,7 @@ export class GenerationContext {
         public readonly query: string,
         public readonly blueprint: Blueprint,
         public readonly designDNA: DesignDNA | undefined,
+        public readonly behaviorType: 'phasic' | 'agentic',
         public readonly templateDetails: TemplateDetails,
         public readonly dependencies: Record<string, string>,
         public readonly allFiles: FileState[],
@@ -32,6 +33,9 @@ export class GenerationContext {
      * Create context from current state
      */
     static from(state: CodeGenState, templateDetails: TemplateDetails, logger?: Pick<StructuredLogger, 'info' | 'warn'>): GenerationContext {
+        const behaviorType = 'behaviorType' in state
+            ? (state as BaseProjectState).behaviorType
+            : 'phasic';
         const dependencies = DependencyManagement.mergeDependencies(
             templateDetails.deps || {},
             state.lastPackageJson,
@@ -47,12 +51,29 @@ export class GenerationContext {
             state.query,
             state.blueprint,
             state.designDNA,
+            behaviorType,
             templateDetails,
             dependencies,
             allFiles,
             state.generatedPhases,
             state.commandsHistory || []
         );
+    }
+
+    static isAgentic(context: GenerationContext): context is AgenticGenerationContext {
+        return context.behaviorType === 'agentic';
+    }
+
+    static isPhasic(context: GenerationContext): context is PhasicGenerationContext {
+        return context.behaviorType === 'phasic';
+    }
+
+    static getCompletedPhases(context: GenerationContext): PhaseState[] {
+        return context.getCompletedPhases();
+    }
+
+    static getFileTree(context: GenerationContext): FileTreeNode {
+        return context.getFileTree();
     }
 
     /**
@@ -75,6 +96,14 @@ export class GenerationContext {
         return builder.build();
     }
 }
+
+export type AgenticGenerationContext = GenerationContext & {
+    readonly behaviorType: 'agentic';
+};
+
+export type PhasicGenerationContext = GenerationContext & {
+    readonly behaviorType: 'phasic';
+};
 
 class FileTreeBuilder {
     private readonly directoryIndex = new Map<string, FileTreeNode>();

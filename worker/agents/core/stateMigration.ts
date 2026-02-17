@@ -210,7 +210,7 @@ export class StateMigration {
 
             const newState = nextStateRecord as unknown as AgentState;
 
-            const stateWithDeprecated = newState as StateWithDeprecatedFields;
+            const stateWithDeprecated = newState as unknown as Record<string, unknown>;
             if (stateHasDeprecatedProps) {
                 delete stateWithDeprecated.latestScreenshot;
             }

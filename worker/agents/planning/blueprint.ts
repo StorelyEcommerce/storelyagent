@@ -1,7 +1,13 @@
 import { TemplateDetails, TemplateFileSchema } from '../../services/sandbox/sandboxTypes'; // Import the type
 import { STRATEGIES, PROMPT_UTILS, generalSystemPromptBuilder } from '../prompts';
 import { executeInference } from '../inferutils/infer';
-import { Blueprint, BlueprintSchema, DesignDNA, TemplateSelection } from '../schemas';
+import {
+    type Blueprint,
+    type DesignDNA,
+    type TemplateSelection,
+    AgenticBlueprintSchema,
+    PhasicBlueprintSchema,
+} from '../schemas';
 import { createLogger } from '../../logger';
 import { createSystemMessage, createUserMessage, createMultiModalUserMessage } from '../inferutils/common';
 import { InferenceContext } from '../inferutils/config.types';
@@ -48,14 +54,14 @@ const SYSTEM_PROMPT = `<ROLE>
     - The home page hero section MUST include:
       1. A compelling headline that reflects the store's niche/brand
       2. A subheadline that communicates the store's value proposition
-      3. **MINIMALIST CSS styling** - use gradients, solid colors, and shadows. NO external images or logos.
+      3. **PROMPT-ALIGNED CSS styling** - use style-appropriate gradients, solid colors, shadows, spacing rhythm, and typography choices that reflect the requested aesthetic. NO external images or logos.
       4. Clear call-to-action buttons to browse products
     - DO NOT leave the default generic "Shop with Confidence" text - customize it for the user's specific store
     
     **CRITICAL - SAMPLE PRODUCT REQUIREMENT:**
     - You MUST create at least 1 sample product in the seed.sql file that matches the store's theme
     - The sample product should have:
-      1. A realistic product name relevant to the store's niche
+      1. A realistic product name relevant to the store's niche (not a generic placeholder name)
       2. A compelling description
       3. A realistic price
       4. A CSS-styled placeholder for the image (gradient background or colored container with product name)
@@ -83,6 +89,7 @@ const SYSTEM_PROMPT = `<ROLE>
     - The user can always request additional features later - don't preemptively add them.
     
     **VISUAL DESIGN EXCELLENCE**: Design the ecommerce application frontend with exceptional attention to visual details - specify exact components, navigation patterns, headers, footers, color schemes, typography scales, spacing systems, micro-interactions, animations, hover states, loading states, and responsive behaviors.
+    **ANTI-CONVERGENCE RULE**: Do not default to the same visual recipe across projects. Anchor visual decisions to the specific niche, tone, and style cues in the user request.
     **USER EXPERIENCE FOCUS**: Plan intuitive user flows, clear information hierarchy, accessible design patterns, and delightful interactions that make users want to shop and use the application.
     Build upon the provided ecommerce store template. Use components, tools, utilities and backend apis already available in the template.
 </GOAL>
@@ -145,7 +152,7 @@ const SYSTEM_PROMPT = `<ROLE>
         - This provides a clear, verifiable test case for the core algorithm.
     • **Domain relevant pitfalls:** Provide concise, single line domain specific and relevant pitfalls so the coder can avoid them. Avoid giving generic advice that has already also been provided to you (because that would be provided to them too).
     
-    **Visual Assets - Use These Approaches (MINIMALIST PREFERRED):**
+    **Visual Assets - Use These Approaches (STYLE-ALIGNED):**
     ✅ CSS visuals: Use Tailwind gradients (bg-gradient-to-r), solid colors, shadows, and borders
     ✅ Placeholder containers: Styled div elements with gradient or solid backgrounds
     ✅ Canvas drawings: \`<canvas>\` element for shapes, patterns, charts if needed
@@ -233,9 +240,9 @@ interface BaseBlueprintGenerationArgs {
     query: string;
     language: string;
     frameworks: string[];
-    // Add optional template info
-    templateDetails: TemplateDetails;
-    templateMetaInfo: TemplateSelection;
+    templateDetails?: TemplateDetails;
+    templateMetaInfo?: TemplateSelection;
+    projectType?: ProjectType;
     designDNA?: DesignDNA;
     images?: ProcessedImageAttachment[];
     stream?: {
@@ -249,22 +256,41 @@ export interface PhasicBlueprintGenerationArgs extends BaseBlueprintGenerationAr
     templateMetaInfo: TemplateSelection;
 }
 
-export interface AgenticBlueprintGenerationArgs extends BaseBlueprintGenerationArgs {
-    templateDetails?: TemplateDetails;
-    templateMetaInfo?: TemplateSelection;
-}
+export type AgenticBlueprintGenerationArgs = BaseBlueprintGenerationArgs;
+
+export type BlueprintGenerationArgs =
+    | PhasicBlueprintGenerationArgs
+    | AgenticBlueprintGenerationArgs;
 
 /**
  * Generate a blueprint for the application based on user prompt
  */
 // Update function signature and system prompt
-export async function generateBlueprint({ env, inferenceContext, query, language, frameworks, templateDetails, templateMetaInfo, designDNA, images, stream }: BlueprintGenerationArgs): Promise<Blueprint> {
+export async function generateBlueprint({
+    env,
+    inferenceContext,
+    query,
+    language,
+    frameworks,
+    templateDetails,
+    templateMetaInfo,
+    projectType = 'app',
+    designDNA,
+    images,
+    stream,
+}: BlueprintGenerationArgs): Promise<Blueprint> {
     try {
-        logger.info(`Generating ${isAgentic ? 'agentic' : 'phasic'} blueprint`, { query, queryLength: query.length, imagesCount: images?.length || 0 });
+        const isAgentic = !templateMetaInfo || projectType !== 'app';
+        logger.info(`Generating ${isAgentic ? 'agentic' : 'phasic'} blueprint`, {
+            query,
+            queryLength: query.length,
+            imagesCount: images?.length || 0,
+            projectType,
+        });
         if (templateDetails) logger.info(`Using template: ${templateDetails.name}`);
 
-        // Select prompt and schema based on behavior type
-        const systemPromptTemplate = isAgentic ? SIMPLE_SYSTEM_PROMPT : PHASIC_SYSTEM_PROMPT;
+        // Select schema based on behavior type
+        const systemPromptTemplate = SYSTEM_PROMPT;
         const schema = isAgentic ? AgenticBlueprintSchema : PhasicBlueprintSchema;
         
         // Build system prompt with template context (if provided)
@@ -326,12 +352,11 @@ export async function generateBlueprint({ env, inferenceContext, query, language
         });
 
         // Filter out PDF files from phasic blueprints
-        if (results && !isAgentic) {
-            const phasicResults = results as PhasicBlueprint;
-            phasicResults.initialPhase.files = phasicResults.initialPhase.files.filter(f => !f.path.endsWith('.pdf'));
+        if (results && !isAgentic && 'initialPhase' in results) {
+            results.initialPhase.files = results.initialPhase.files.filter(f => !f.path.endsWith('.pdf'));
         }
 
-        return results as PhasicBlueprint | AgenticBlueprint;
+        return results as Blueprint;
     } catch (error) {
         logger.error("Error generating blueprint:", error);
         throw error;

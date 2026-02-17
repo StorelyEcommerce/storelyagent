@@ -459,6 +459,12 @@ ${currentDiff}
         successfullyAppliedCount: number
     ): Promise<string | null> {
         try {
+            const metadata = this.inferenceContext.metadata;
+            if (!metadata) {
+                this.logger.warn('Missing inference metadata for realtime code fixer');
+                return null;
+            }
+
             // Format the failed blocks in the expected format for the new prompt
             const failedBlocksText = failedBlocks.map((block) => 
                 `## SearchReplaceNoExactMatch: This SEARCH block failed to exactly match lines in the file
@@ -490,7 +496,7 @@ ${block.error}
             
             const llmResponse = await infer({
                 env: this.env,
-                metadata: this.inferenceContext.metadata,
+                metadata,
                 modelName: AGENT_CONFIG['realtimeCodeFixer'].name,
                 reasoning_effort: 'low',
                 temperature: 0.0,
@@ -540,8 +546,12 @@ export function IsRealtimeCodeFixerEnabled(inferenceContext: InferenceContext): 
         console.log("Realtime code fixer enabled");
         return true;
     }
-    
-    if (inferenceContext.userModelConfigs?.['realtimeCodeFixer'] && inferenceContext.userModelConfigs['realtimeCodeFixer'].name !== AIModels.DISABLED) {
+
+    const userConfig = inferenceContext.userModelConfigs instanceof Map
+        ? inferenceContext.userModelConfigs.get('realtimeCodeFixer')
+        : inferenceContext.userModelConfigs?.realtimeCodeFixer;
+
+    if (userConfig && userConfig.name !== AIModels.DISABLED) {
         console.log("Realtime code fixer enabled by user");
         return true;
     }

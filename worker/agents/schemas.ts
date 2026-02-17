@@ -129,6 +129,8 @@ export const AgenticBlueprintSchema = SimpleBlueprintSchema.extend({
     plan: z.array(z.string()).describe('Step by step plan for implementing the project'),
 });
 
+export const BlueprintSchema = z.union([PhasicBlueprintSchema, AgenticBlueprintSchema]);
+
 export const BlueprintSchemaLite = PhasicBlueprintSchema.omit({
     initialPhase: true,
 });
@@ -161,6 +163,8 @@ export const ScreenshotAnalysisSchema = z.object({
 
 export type TemplateSelection = z.infer<typeof TemplateSelectionSchema>;
 export type Blueprint = z.infer<typeof BlueprintSchema>;
+export type PhasicBlueprint = z.infer<typeof PhasicBlueprintSchema>;
+export type AgenticBlueprint = z.infer<typeof AgenticBlueprintSchema>;
 export type DesignDNA = z.infer<typeof DesignDNASchema>;
 export type FileConceptType = z.infer<typeof FileConceptSchema>;
 export type PhaseConceptType = z.infer<typeof PhaseConceptSchema>;

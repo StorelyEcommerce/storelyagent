@@ -20,6 +20,7 @@ export interface RouteInfo {
   sandboxId: string;
   path: string;
   token: string;
+  previewDomain: string;
 }
 
 export async function proxyToSandbox<E extends SandboxEnv>(
@@ -34,7 +35,7 @@ export async function proxyToSandbox<E extends SandboxEnv>(
       return null; // Not a request to an exposed container port
     }
 
-    const { sandboxId, port, path, token } = routeInfo;
+    const { sandboxId, port, path, token, previewDomain } = routeInfo;
     const sandbox = getSandbox(env.Sandbox, sandboxId);
 
     logger.info("[Proxy] Sandbox", sandbox, "Port", port, "Path", path, "Token", token);
@@ -60,7 +61,7 @@ export async function proxyToSandbox<E extends SandboxEnv>(
       proxyUrl = `http://localhost:3000${path}${url.search}`;
     }
 
-    const proxyRequest = new Request(proxyUrl, {
+    const buildProxyRequest = () => new Request(proxyUrl, {
       method: request.method,
       headers: {
         ...Object.fromEntries(request.headers),
@@ -73,6 +74,7 @@ export async function proxyToSandbox<E extends SandboxEnv>(
       // @ts-expect-error - duplex required for body streaming in modern runtimes
       duplex: 'half',
     });
+    const proxyRequest = buildProxyRequest();
 
     logger.info('Proxying request to sandbox', {
       sandboxId,
@@ -82,7 +84,110 @@ export async function proxyToSandbox<E extends SandboxEnv>(
       proxyUrl,
     });
 
-    return await sandbox.containerFetch(proxyRequest, port);
+    const response = await sandbox.containerFetch(proxyRequest, port);
+    const isPortNotFoundResponse = async (candidate: Response): Promise<boolean> => (
+      candidate.status === 500 &&
+      (await candidate.clone().text()).includes('container port not found')
+    );
+
+    if (
+      (request.method === 'GET' || request.method === 'HEAD') &&
+      await isPortNotFoundResponse(response)
+    ) {
+      logger.warn('Container port mapping missing, attempting to re-expose and retry', {
+        sandboxId,
+        port,
+        path,
+        previewDomain,
+      });
+
+      let retryResponse: Response | null = null;
+
+      try {
+        let reExposed = await sandbox.exposePort(port, { hostname: previewDomain });
+        if (!reExposed) {
+          throw new Error('Failed to expose port');
+        }
+
+        logger.info('Re-exposed sandbox port successfully', {
+          sandboxId,
+          port,
+          previewDomain,
+          url: reExposed.url,
+        });
+
+        const retryRequest = buildProxyRequest();
+        retryResponse = await sandbox.containerFetch(retryRequest, port);
+        if (!(await isPortNotFoundResponse(retryResponse))) {
+          return retryResponse;
+        }
+        logger.warn('Retry after re-expose still reports missing container port', {
+          sandboxId,
+          port,
+          path,
+          status: retryResponse.status,
+        });
+      } catch (reExposeError) {
+        const errorMessage = reExposeError instanceof Error ? reExposeError.message : String(reExposeError);
+
+        if (errorMessage.includes('PortAlreadyExposedError')) {
+          logger.warn('Port reports already exposed; recycling exposure before retry', {
+            sandboxId,
+            port,
+            previewDomain,
+          });
+
+          try {
+            await sandbox.unexposePort(port);
+            const reExposed = await sandbox.exposePort(port, { hostname: previewDomain });
+            logger.info('Recycled sandbox port exposure successfully', {
+              sandboxId,
+              port,
+              previewDomain,
+              url: reExposed.url,
+            });
+
+            const retryRequest = buildProxyRequest();
+            retryResponse = await sandbox.containerFetch(retryRequest, port);
+            if (!(await isPortNotFoundResponse(retryResponse))) {
+              return retryResponse;
+            }
+            logger.warn('Retry after recycling exposure still reports missing container port', {
+              sandboxId,
+              port,
+              path,
+              status: retryResponse.status,
+            });
+          } catch (recycleError) {
+            logger.error('Failed to recycle sandbox port exposure', {
+              sandboxId,
+              port,
+              previewDomain,
+              error: recycleError instanceof Error ? recycleError.message : String(recycleError),
+            });
+          }
+        }
+
+        logger.error('Failed to re-expose sandbox port', {
+          sandboxId,
+          port,
+          previewDomain,
+          error: errorMessage,
+        });
+      }
+
+      logger.error('Container port mapping still missing after retries - failing request explicitly', {
+        sandboxId,
+        port,
+        path,
+      });
+      if (retryResponse) {
+        return retryResponse;
+      }
+      return new Response('Sandbox port mapping missing after retry. Deployment failed.', { status: 502 });
+    }
+
+    return response;
   } catch (error) {
     logger.error(
       'Proxy routing error',
@@ -106,6 +211,8 @@ function extractSandboxRoute(url: URL): RouteInfo | null {
   const portStr = subdomainMatch[1];
   const sandboxId = subdomainMatch[2];
   const token = subdomainMatch[3]; // Mandatory token
+  const previewDomainHost = subdomainMatch[4];
+  const previewDomain = url.port ? `${previewDomainHost}:${url.port}` : previewDomainHost;
 
   const port = parseInt(portStr, 10);
 
@@ -119,6 +226,7 @@ function extractSandboxRoute(url: URL): RouteInfo | null {
     sandboxId,
     path: url.pathname || "/",
     token,
+    previewDomain,
   };
 }
 

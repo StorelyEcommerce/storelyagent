@@ -28,7 +28,6 @@ import {
     GetLogsResponse,
     ListInstancesResponse,
     TemplateDetails,
-    TemplateInfo,
     InstanceCreationRequest,
 } from './sandboxTypes';
 
@@ -36,7 +35,6 @@ import { createObjectLogger, StructuredLogger } from '../../logger';
 import { env } from 'cloudflare:workers'
 import { ZipExtractor } from './zipExtractor';
 import { FileTreeBuilder } from './fileTreeBuilder';
-import { DeploymentTarget } from 'worker/agents/core/types';
 
 /**
  * Streaming event for enhanced command execution
@@ -53,6 +51,10 @@ export interface TemplateInfo {
     name: string;
     language?: string;
     frameworks?: string[];
+    disabled?: boolean;
+    projectType?: 'app' | 'workflow' | 'presentation' | 'general';
+    renderMode?: 'sandbox' | 'browser';
+    slideDirectory?: string;
     description: {
         selection: string;
         usage: string;
@@ -61,6 +63,16 @@ export interface TemplateInfo {
 
 const templateDetailsCache: Record<string, TemplateDetails> = {};
 const ONLY_ALLOWED_TEMPLATE = 'base-store';
+const STORELY_THEME_EDITABLE_PREFIX = 'storefront-app/theme/';
+
+function sanitizeDontTouchFiles(filePaths: string[]): string[] {
+    const sanitized = filePaths.filter((filePath) => !filePath.startsWith(STORELY_THEME_EDITABLE_PREFIX));
+    if (sanitized.length !== filePaths.length) {
+        const removed = filePaths.filter((filePath) => filePath.startsWith(STORELY_THEME_EDITABLE_PREFIX));
+        console.warn(`Removed storefront theme files from dontTouchFiles to allow generation: ${removed.join(', ')}`);
+    }
+    return sanitized;
+}
 
 /**
  * Clear the template details cache. Call this when templates are updated in R2.
@@ -144,7 +156,12 @@ export abstract class BaseSandboxService {
     static async getTemplateDetails(templateName: string, downloadDir?: string): Promise<TemplateDetailsResponse> {
         try {
             if (templateDetailsCache[templateName]) {
-                const cached = templateDetailsCache[templateName];
+                let cached = templateDetailsCache[templateName];
+                const sanitizedDontTouchFiles = sanitizeDontTouchFiles(cached.dontTouchFiles || []);
+                if (sanitizedDontTouchFiles.length !== (cached.dontTouchFiles || []).length) {
+                    cached = { ...cached, dontTouchFiles: sanitizedDontTouchFiles };
+                    templateDetailsCache[templateName] = cached;
+                }
                 const cachedPackageJson = cached.deps;
                 console.log(`\n${'='.repeat(60)}`);
                 console.log(`📋 USING CACHED TEMPLATE: ${templateName}`);
@@ -200,7 +217,8 @@ export abstract class BaseSandboxService {
 
             // Parse metadata files
             const dontTouchFile = allFiles.find(f => f.filePath === '.donttouch_files.json');
-            const dontTouchFiles = dontTouchFile ? JSON.parse(dontTouchFile.fileContents) : [];
+            const dontTouchFilesRaw = dontTouchFile ? JSON.parse(dontTouchFile.fileContents) : [];
+            const dontTouchFiles = sanitizeDontTouchFiles(dontTouchFilesRaw);
 
             const redactedFile = allFiles.find(f => f.filePath === '.redacted_files.json');
             const redactedFiles = redactedFile ? JSON.parse(redactedFile.fileContents) : [];
@@ -232,6 +250,7 @@ export abstract class BaseSandboxService {
                     selection: catalogInfo?.description.selection || '',
                     usage: catalogInfo?.description.usage || ''
                 },
+                projectType: catalogInfo?.projectType || 'app',
                 disabled: catalogInfo?.disabled ?? false,
                 fileTree,
                 allFiles: filesMap,

@@ -1,16 +1,25 @@
-import { ChatCompletionFunctionTool } from 'openai/resources';
+import { ChatCompletionFunctionTool, ChatCompletionMessageFunctionToolCall } from 'openai/resources';
+import { z } from 'zod';
+import { mergeResources, type Resources } from './resources';
+import { Type } from './resource-types';
 
-// SSE-based MCP server (remote, accessible via URL)
-export interface MCPSSEServerConfig {
+export { t, type } from './resource-types';
+export type { Type } from './resource-types';
+export type { Resources as ResourceAccess } from './resources';
+
+export interface MCPServerConfig {
 	name: string;
-	type: 'sse';
+	type?: 'sse';
 	sseUrl: string;
 }
 
-export type MCPServerConfig = MCPSSEServerConfig;
+export interface MCPSSEServerConfig extends MCPServerConfig {
+	type: 'sse';
+}
 
 // Legacy alias for backwards compatibility
 export type MCPSSEConfig = MCPSSEServerConfig;
+
 export interface MCPResult {
 	content: string;
 }
@@ -26,14 +35,28 @@ export interface ToolCallResult {
 	result?: unknown;
 }
 
+type ToolStartHook<TArgs> =
+	| ((toolCall: ChatCompletionMessageFunctionToolCall, args: TArgs) => Promise<void> | void)
+	| ((args: TArgs) => Promise<void> | void);
+
+type ToolCompleteHook<TArgs, TResult> =
+	| ((toolCall: ChatCompletionMessageFunctionToolCall, args: TArgs, result: TResult) => Promise<void> | void)
+	| ((args: TArgs, result: TResult) => Promise<void> | void);
+
 export interface ToolDefinition<TArgs = unknown, TResult = unknown> {
 	name: string;
 	description: string;
 	schema: z.ZodTypeAny;
 	implementation: (args: TArgs) => Promise<TResult>;
 	resources: (args: TArgs) => Resources;
-	onStart?: (toolCall: ChatCompletionMessageFunctionToolCall, args: TArgs) => Promise<void>;
-	onComplete?: (toolCall: ChatCompletionMessageFunctionToolCall, args: TArgs, result: TResult) => Promise<void>;
+	onStart?: ToolStartHook<TArgs>;
+	onComplete?: ToolCompleteHook<TArgs, TResult>;
+	type?: 'function';
+	function?: {
+		name: string;
+		description: string;
+		parameters: JSONSchema;
+	};
 	openAISchema: ChatCompletionFunctionTool;
 }
 
@@ -147,9 +170,10 @@ function buildTool<TArgs, TResult>(
 	schema: z.ZodObject<z.ZodRawShape>,
 	implementation: (args: TArgs) => Promise<TResult>,
 	resources: (args: TArgs) => Resources,
-	onStart?: (toolCall: ChatCompletionMessageFunctionToolCall, args: TArgs) => Promise<void>,
-	onComplete?: (toolCall: ChatCompletionMessageFunctionToolCall, args: TArgs, result: TResult) => Promise<void>
+	onStart?: ToolStartHook<TArgs>,
+	onComplete?: ToolCompleteHook<TArgs, TResult>
 ): ToolDefinition<TArgs, TResult> {
+	const parameters = zodToOpenAIParameters(schema);
 	return {
 		name,
 		description,
@@ -158,12 +182,18 @@ function buildTool<TArgs, TResult>(
 		resources,
 		onStart,
 		onComplete,
+		type: 'function',
+		function: {
+			name,
+			description,
+			parameters,
+		},
 		openAISchema: {
 			type: 'function' as const,
 			function: {
 				name,
 				description,
-				parameters: zodToOpenAIParameters(schema),
+				parameters,
 			},
 		},
 	};
@@ -203,5 +233,21 @@ export function tool<TArgs extends Record<string, unknown>, TResult>(config: {
 }
 
 export function toOpenAITool(tool: ToolDefinition<unknown, unknown>): ChatCompletionFunctionTool {
-	return tool.openAISchema;
+	if (tool.openAISchema) {
+		return tool.openAISchema;
+	}
+	if (tool.function) {
+		return {
+			type: 'function',
+			function: tool.function,
+		};
+	}
+	return {
+		type: 'function',
+		function: {
+			name: tool.name,
+			description: tool.description,
+			parameters: { type: 'object', properties: {}, additionalProperties: false },
+		},
+	};
 }

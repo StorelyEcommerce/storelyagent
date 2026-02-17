@@ -10,15 +10,34 @@ import { useParams, useSearchParams, useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import { MonacoEditor } from '../../components/monaco-editor/monaco-editor';
 import { AnimatePresence, motion } from 'framer-motion';
-import { LoaderCircle, MoreHorizontal, RotateCcw } from 'lucide-react';
+import {
+	ArrowRight,
+	Expand,
+	GitBranch,
+	Github,
+	ImageIcon,
+	LoaderCircle,
+	MoreHorizontal,
+	RefreshCw,
+	RotateCcw,
+	X,
+} from 'lucide-react';
 import clsx from 'clsx';
 import { UserMessage, AIMessage } from './components/messages';
 import { PhaseTimeline } from './components/phase-timeline';
 import { PreviewIframe } from './components/preview-iframe';
 import { ViewModeSwitch } from './components/view-mode-switch';
 import { type DebugMessage } from './components/debug-panel';
-import { useChat, type FileType } from './hooks/use-chat';
-import { type ModelConfigsData, type BlueprintType, SUPPORTED_IMAGE_MIME_TYPES } from '@/api-types';
+import { useChat } from './hooks/use-chat';
+import {
+	type BlueprintType,
+	type FileType,
+	type ModelConfigsInfo,
+	type PhasicBlueprint,
+	type ProjectType,
+	SUPPORTED_IMAGE_MIME_TYPES,
+	normalizeProjectType,
+} from '@/api-types';
 import { Copy } from './components/copy';
 import { useFileContentStream } from './hooks/use-file-content-stream';
 import { logger } from '@/utils/logger';
@@ -31,13 +50,17 @@ import { useDragDrop } from '@/hooks/use-drag-drop';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { sendWebSocketMessage } from './utils/websocket-helpers';
-import { detectContentType, isDocumentationPath, isMarkdownFile } from './utils/content-detector';
+import { detectContentType, isDocumentationPath } from './utils/content-detector';
 import { mergeFiles } from '@/utils/file-helpers';
 import { ChatModals } from './components/chat-modals';
-import { MainContentPanel } from './components/main-content-panel';
-import { ChatInput } from './components/chat-input';
 import { useVault } from '@/hooks/use-vault';
 import { VaultUnlockModal } from '@/components/vault';
+import { featureRegistry } from '@/features';
+import { AgentModeDisplay } from '@/components/agent-mode-display';
+import { ImageAttachmentPreview } from '@/components/image-attachment-preview';
+import { ModelConfigInfo } from '@/components/shared/ModelConfigInfo';
+import { Blueprint } from './components/blueprint';
+import { FileExplorer } from './components/file-explorer';
 
 const isPhasicBlueprint = (blueprint?: BlueprintType | null): blueprint is PhasicBlueprint =>
 	!!blueprint && 'implementationRoadmap' in blueprint;
@@ -48,6 +71,8 @@ export default function Chat() {
 	const [searchParams] = useSearchParams();
 	const userQuery = searchParams.get('query');
 	const agentMode = searchParams.get('agentMode') || 'deterministic';
+	const urlProjectType = searchParams.get('projectType');
+	const projectTypeFromUrl: ProjectType = normalizeProjectType(urlProjectType);
 
 	// Extract images from URL params if present
 	const userImages = useMemo(() => {
@@ -125,10 +150,9 @@ export default function Chat() {
 		previewUrl,
 		clearEdit,
 		projectStages,
-		phaseTimeline,
-		isThinking,
-		onCompleteBootstrap,
-		waitingForStoreInfo,
+			phaseTimeline,
+			isThinking,
+			waitingForStoreInfo,
 		// Generation control (stop button in chat)
 		isGenerating,
 		// Preview refresh control
@@ -148,8 +172,9 @@ export default function Chat() {
 		chatId: urlChatId,
 		query: userQuery,
 		images: userImages,
-		projectType: urlProjectType as ProjectType,
+		projectType: projectTypeFromUrl,
 		onDebugMessage: addDebugMessage,
+		onVaultUnlockRequired: handleVaultUnlockRequired,
 		onGuardrailRejection: handleGuardrailRejection,
 	});
 
@@ -425,12 +450,6 @@ export default function Chat() {
         return Object.values(contentDetection.Contents).some(bundle => bundle.type === 'markdown');
     }, [contentDetection]);
 
-	// Preview available based on projectType and content
-	const previewAvailable = useMemo(() => {
-		if (hasDocumentation || !!previewUrl) return true;
-		return false;
-	}, [hasDocumentation, previewUrl]);
-
 	const showMainView = useMemo(() => {
 		// For agentic mode: show preview panel when files exist or preview URL exists
 		if (behaviorType === 'agentic') {
@@ -492,7 +511,7 @@ export default function Chat() {
 		}
 
 		// Update ref for next comparison
-		prevMarkdownCountRef.current = markdownFiles.length;
+		prevMarkdownCountRef.current = files.length;
 	}, [previewUrl, isPhase1Complete, isStaticContent, files, activeFilePath, behaviorType, hasDocumentation, projectType, urlChatId]);
 
 	useEffect(() => {
@@ -548,29 +567,6 @@ export default function Chat() {
 		}
 	}, [isGeneratingBlueprint, view]);
 
-	useEffect(() => {
-		// Only show bootstrap completion message for NEW chats, not when reloading existing ones
-		// Don't show if we're waiting for store info (agent not initialized yet)
-		if (doneStreaming && !isGeneratingBlueprint && !blueprint && urlChatId === 'new' && !waitingForStoreInfo) {
-			onCompleteBootstrap();
-			sendAiMessage(
-				createAIMessage(
-					'creating-blueprint',
-					'Bootstrapping complete, now creating a blueprint for you...',
-					true,
-				),
-			);
-		}
-	}, [
-		doneStreaming,
-		isGeneratingBlueprint,
-		sendAiMessage,
-		blueprint,
-		onCompleteBootstrap,
-		urlChatId,
-		waitingForStoreInfo,
-	]);
-
 	const isRunning = useMemo(() => {
 		return (
 			isBootstrapping || isGeneratingBlueprint // || codeGenState === 'active'
@@ -579,13 +575,18 @@ export default function Chat() {
 
 	// Check if chat input should be disabled (before blueprint completion, or during debugging)
 	const isChatDisabled = useMemo(() => {
+		// Store-info collection must stay interactive before blueprint generation starts.
+		if (waitingForStoreInfo) {
+			return false;
+		}
+
 		const blueprintStage = projectStages.find(
 			(stage) => stage.id === 'blueprint',
 		);
 		const blueprintNotCompleted = !blueprintStage || blueprintStage.status !== 'completed';
 
 		return blueprintNotCompleted || isDebugging;
-	}, [projectStages, isDebugging]);
+	}, [projectStages, isDebugging, waitingForStoreInfo]);
 
 	const chatFormRef = useRef<HTMLFormElement>(null);
 	const { isDragging: isChatDragging, dragHandlers: chatDragHandlers } = useDragDrop({
@@ -959,6 +960,7 @@ export default function Chat() {
 												onChange={handleViewModeChange}
 												previewAvailable={!!previewUrl}
 												showTooltip={showTooltip}
+												hasDocumentation={hasDocumentation}
 											/>
 										</div>
 
@@ -1075,6 +1077,7 @@ export default function Chat() {
 												onChange={handleViewModeChange}
 												previewAvailable={!!previewUrl}
 												showTooltip={showTooltip}
+												hasDocumentation={hasDocumentation}
 											/>
 										</div>
 
@@ -1192,6 +1195,7 @@ export default function Chat() {
 														!!previewUrl
 													}
 													showTooltip={showTooltip}
+													hasDocumentation={hasDocumentation}
 												/>
 											</div>
 
@@ -1260,9 +1264,6 @@ export default function Chat() {
 										>
 											<FileExplorer
 												files={files}
-												bootstrapFiles={
-													streamedBootstrapFiles
-												}
 												currentFile={activeFile}
 												onFileClick={handleFileClick}
 											/>
@@ -1312,6 +1313,21 @@ export default function Chat() {
 			</div>
 
 			{/* Debug Panel - Removed for production */}
+
+			<ChatModals
+				debugMessages={[]}
+				chatId={chatId}
+				onClearDebugMessages={() => {}}
+				isResetDialogOpen={isResetDialogOpen}
+				onResetDialogChange={setIsResetDialogOpen}
+				onResetConversation={handleResetConversation}
+				githubExport={githubExport}
+				app={app}
+				urlChatId={urlChatId}
+				isGitCloneModalOpen={isGitCloneModalOpen}
+				onGitCloneModalChange={setIsGitCloneModalOpen}
+				user={user}
+			/>
 
 			<VaultUnlockModal
 				open={vaultState.unlockRequested && vaultState.status === 'locked'}

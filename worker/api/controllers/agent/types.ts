@@ -10,6 +10,7 @@ export interface CodeGenArgs {
     language?: string;
     frameworks?: string[];
     selectedTemplate?: string;
+    agentMode?: 'deterministic' | 'smart';
     behaviorType?: BehaviorType;
     projectType?: ProjectType;
     images?: ImageAttachment[];
@@ -26,8 +27,7 @@ export interface AgentConnectionData {
     agentId: string;
 }
 
-export interface AgentPreviewResponse extends PreviewType {
-}
+export type AgentPreviewResponse = PreviewType;
 
 export interface AgentCloudflareDeployResponse {
     deploymentUrl: string;

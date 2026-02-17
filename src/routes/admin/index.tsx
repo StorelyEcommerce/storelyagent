@@ -3,7 +3,7 @@
  * Centralized admin interface for managing multiple stores
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/contexts/auth-context';
 import { apiClient } from '@/lib/api-client';
 import { toast } from 'sonner';
@@ -81,19 +81,7 @@ export default function AdminDashboard() {
 
     const selectedStore = stores.find(s => s.id === selectedStoreId);
 
-    // Load user's stores from platform API
-    useEffect(() => {
-        loadStores();
-    }, [user]);
-
-    // Load store data when selected store changes
-    useEffect(() => {
-        if (selectedStoreId && selectedStore?.deploymentId) {
-            loadStoreData();
-        }
-    }, [selectedStoreId]);
-
-    const loadStores = async () => {
+    const loadStores = useCallback(async () => {
         try {
             setLoading(true);
             const response = await apiClient.getUserApps();
@@ -112,8 +100,8 @@ export default function AdminDashboard() {
                 setStores(deployedStores);
 
                 // Select first store by default
-                if (deployedStores.length > 0 && !selectedStoreId) {
-                    setSelectedStoreId(deployedStores[0].id);
+                if (deployedStores.length > 0) {
+                    setSelectedStoreId((currentStoreId) => currentStoreId || deployedStores[0].id);
                 }
             }
         } catch (error) {
@@ -122,7 +110,7 @@ export default function AdminDashboard() {
         } finally {
             setLoading(false);
         }
-    };
+    }, []);
 
     const getStoreApiUrl = (store: UserStore): string => {
         if (store.customSubdomain) {
@@ -131,7 +119,7 @@ export default function AdminDashboard() {
         return `https://${store.deploymentId}.storelyshop.com`;
     };
 
-    const loadStoreData = async () => {
+    const loadStoreData = useCallback(async () => {
         if (!selectedStore?.deploymentId) return;
 
         try {
@@ -188,7 +176,19 @@ export default function AdminDashboard() {
         } finally {
             setStoreDataLoading(false);
         }
-    };
+    }, [selectedStore]);
+
+    // Load user's stores from platform API
+    useEffect(() => {
+        loadStores();
+    }, [user, loadStores]);
+
+    // Load store data when selected store changes
+    useEffect(() => {
+        if (selectedStore?.deploymentId) {
+            loadStoreData();
+        }
+    }, [selectedStore?.deploymentId, loadStoreData]);
 
     const formatCurrency = (cents: number, currency: string = 'usd') => {
         return new Intl.NumberFormat('en-US', {
@@ -209,12 +209,14 @@ export default function AdminDashboard() {
         return <Badge variant={variants[status] || 'secondary'}>{status}</Badge>;
     };
 
+    const surfaceClassName = 'rounded-[18px] border border-accent/30 dark:border-accent/50 bg-bg-4 dark:bg-bg-2 shadow-textarea';
+
     if (loading) {
         return (
-            <div className="min-h-screen bg-bg-3 flex items-center justify-center">
-                <div className="flex items-center gap-3">
-                    <RefreshCw className="h-5 w-5 animate-spin text-text-tertiary" />
-                    <span className="text-text-tertiary">Loading stores...</span>
+            <div className="relative flex size-full items-center justify-center px-4 py-8">
+                <div className={`${surfaceClassName} flex items-center gap-3 px-5 py-4`}>
+                    <RefreshCw className="h-5 w-5 animate-spin text-accent" />
+                    <span className="text-text-primary/80">Loading stores...</span>
                 </div>
             </div>
         );
@@ -222,41 +224,39 @@ export default function AdminDashboard() {
 
     if (stores.length === 0) {
         return (
-            <div className="min-h-screen bg-bg-3 relative">
-                <main className="container mx-auto px-4 py-8 max-w-4xl">
-                    <div className="text-center py-16">
-                        <Store className="h-16 w-16 text-text-tertiary mx-auto mb-4" />
-                        <h1 className="text-2xl font-bold text-text-primary mb-2">No Deployed Stores</h1>
-                        <p className="text-text-tertiary mb-6">
+            <div className="relative flex size-full items-center justify-center px-4 py-8">
+                <main className={`w-full max-w-2xl p-8 text-center ${surfaceClassName}`}>
+                    <Store className="mx-auto mb-4 h-14 w-14 text-accent/80" />
+                    <h1 className="mb-2 text-4xl font-medium tracking-tight text-text-primary">No Deployed Stores</h1>
+                    <p className="mb-6 text-text-primary/70">
                             You don't have any deployed stores yet. Create and deploy a store to manage it here.
-                        </p>
-                        <Button onClick={() => window.location.href = '/'}>
-                            Create a Store
-                        </Button>
-                    </div>
+                    </p>
+                    <Button onClick={() => window.location.href = '/'} className="bg-accent text-white hover:bg-accent/90">
+                        Create a Store
+                    </Button>
                 </main>
             </div>
         );
     }
 
     return (
-        <div className="min-h-screen bg-bg-3 relative">
-            <main className="container mx-auto px-4 py-8 max-w-6xl">
+        <div className="relative flex size-full justify-center px-4 py-8">
+            <main className="w-full max-w-6xl">
                 <div className="space-y-6">
                     {/* Header with Store Switcher */}
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <h1 className="text-3xl font-bold font-[departureMono] text-red-500">
-                                STORE ADMIN
+                    <div className={`${surfaceClassName} flex flex-col gap-4 p-5 sm:flex-row sm:items-end sm:justify-between`}>
+                        <div className="space-y-2">
+                            <h1 className="bg-gradient-to-r from-text-primary to-text-primary/90 bg-clip-text text-4xl font-medium leading-[1.1] tracking-tight text-transparent md:text-5xl">
+                                Store admin
                             </h1>
-                            <p className="text-text-tertiary mt-1">
+                            <p className="text-text-primary/70">
                                 Manage your store's products, orders, and settings
                             </p>
                         </div>
 
-                        <div className="flex items-center gap-4">
+                        <div className="flex flex-wrap items-center gap-3">
                             <Select value={selectedStoreId || ''} onValueChange={setSelectedStoreId}>
-                                <SelectTrigger className="w-[280px]">
+                                <SelectTrigger className="w-full border-accent/30 bg-bg-3 sm:w-[280px]">
                                     <SelectValue placeholder="Select a store" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -276,6 +276,7 @@ export default function AdminDashboard() {
                                     variant="outline"
                                     size="sm"
                                     onClick={() => window.open(getStoreApiUrl(selectedStore), '_blank')}
+                                    className="border-accent/30 bg-bg-3 hover:bg-bg-3/80"
                                 >
                                     <ExternalLink className="h-4 w-4 mr-2" />
                                     View Store
@@ -284,37 +285,37 @@ export default function AdminDashboard() {
                         </div>
                     </div>
 
-                    <Separator />
+                    <Separator className="bg-accent/20" />
 
                     {/* Stats Overview */}
                     {selectedStore && (
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                            <Card>
+                            <Card className={surfaceClassName}>
                                 <CardContent className="pt-6">
                                     <div className="flex items-center gap-2">
-                                        <Package className="h-5 w-5 text-blue-500" />
+                                        <Package className="h-5 w-5 text-accent" />
                                         <div>
                                             <p className="text-2xl font-bold">{products.length}</p>
-                                            <p className="text-sm text-text-tertiary">Products</p>
+                                            <p className="text-sm text-text-primary/70">Products</p>
                                         </div>
                                     </div>
                                 </CardContent>
                             </Card>
-                            <Card>
+                            <Card className={surfaceClassName}>
                                 <CardContent className="pt-6">
                                     <div className="flex items-center gap-2">
-                                        <ShoppingCart className="h-5 w-5 text-green-500" />
+                                        <ShoppingCart className="h-5 w-5 text-accent" />
                                         <div>
                                             <p className="text-2xl font-bold">{orders.length}</p>
-                                            <p className="text-sm text-text-tertiary">Orders</p>
+                                            <p className="text-sm text-text-primary/70">Orders</p>
                                         </div>
                                     </div>
                                 </CardContent>
                             </Card>
-                            <Card>
+                            <Card className={surfaceClassName}>
                                 <CardContent className="pt-6">
                                     <div className="flex items-center gap-2">
-                                        <CreditCard className="h-5 w-5 text-purple-500" />
+                                        <CreditCard className="h-5 w-5 text-accent" />
                                         <div>
                                             <p className="text-2xl font-bold">
                                                 {formatCurrency(
@@ -322,18 +323,18 @@ export default function AdminDashboard() {
                                                     'usd'
                                                 )}
                                             </p>
-                                            <p className="text-sm text-text-tertiary">Total Revenue</p>
+                                            <p className="text-sm text-text-primary/70">Total Revenue</p>
                                         </div>
                                     </div>
                                 </CardContent>
                             </Card>
-                            <Card>
+                            <Card className={surfaceClassName}>
                                 <CardContent className="pt-6">
                                     <div className="flex items-center gap-2">
-                                        <Settings className="h-5 w-5 text-orange-500" />
+                                        <Settings className="h-5 w-5 text-accent" />
                                         <div>
                                             <p className="text-2xl font-bold capitalize">{selectedStore.status}</p>
-                                            <p className="text-sm text-text-tertiary">Store Status</p>
+                                            <p className="text-sm text-text-primary/70">Store Status</p>
                                         </div>
                                     </div>
                                 </CardContent>
@@ -344,7 +345,7 @@ export default function AdminDashboard() {
                     {/* Main Content Tabs */}
                     {selectedStore && (
                         <Tabs defaultValue="products" className="space-y-4">
-                            <TabsList>
+                            <TabsList className="border border-accent/30 bg-bg-4 dark:bg-bg-2">
                                 <TabsTrigger value="products" className="gap-2">
                                     <Package className="h-4 w-4" />
                                     Products
@@ -360,27 +361,31 @@ export default function AdminDashboard() {
                             </TabsList>
 
                             {storeDataLoading ? (
-                                <div className="flex items-center justify-center py-12">
-                                    <RefreshCw className="h-5 w-5 animate-spin text-text-tertiary mr-2" />
-                                    <span className="text-text-tertiary">Loading store data...</span>
+                                <div className={`${surfaceClassName} flex items-center justify-center py-12`}>
+                                    <RefreshCw className="h-5 w-5 animate-spin text-accent mr-2" />
+                                    <span className="text-text-primary/80">Loading store data...</span>
                                 </div>
                             ) : (
                                 <>
                                     {/* Products Tab */}
                                     <TabsContent value="products">
-                                        <Card>
+                                        <Card className={surfaceClassName}>
                                             <CardHeader>
                                                 <CardTitle className="flex items-center justify-between">
                                                     <span>Products</span>
-                                                    <Button size="sm" onClick={() => toast.info('Product creation coming soon!')}>
+                                                    <Button
+                                                        size="sm"
+                                                        className="bg-accent text-white hover:bg-accent/90"
+                                                        onClick={() => toast.info('Product creation coming soon!')}
+                                                    >
                                                         Add Product
                                                     </Button>
                                                 </CardTitle>
                                             </CardHeader>
                                             <CardContent>
                                                 {products.length === 0 ? (
-                                                    <div className="text-center py-8 text-text-tertiary">
-                                                        <Package className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                                                    <div className="py-8 text-center text-text-primary/70">
+                                                        <Package className="mx-auto mb-2 h-12 w-12 opacity-50" />
                                                         <p>No products yet</p>
                                                     </div>
                                                 ) : (
@@ -388,7 +393,7 @@ export default function AdminDashboard() {
                                                         {products.map((product) => (
                                                             <div
                                                                 key={product.id}
-                                                                className="flex items-center justify-between p-4 border rounded-lg"
+                                                                className="flex items-center justify-between rounded-lg border border-accent/20 bg-bg-3/60 p-4"
                                                             >
                                                                 <div className="flex items-center gap-4">
                                                                     {product.imageUrl ? (
@@ -398,13 +403,13 @@ export default function AdminDashboard() {
                                                                             className="h-12 w-12 object-cover rounded"
                                                                         />
                                                                     ) : (
-                                                                        <div className="h-12 w-12 bg-bg-2 rounded flex items-center justify-center">
-                                                                            <Package className="h-6 w-6 text-text-tertiary" />
+                                                                        <div className="flex h-12 w-12 items-center justify-center rounded bg-bg-2">
+                                                                            <Package className="h-6 w-6 text-text-primary/60" />
                                                                         </div>
                                                                     )}
                                                                     <div>
                                                                         <p className="font-medium">{product.title}</p>
-                                                                        <p className="text-sm text-text-tertiary">
+                                                                        <p className="text-sm text-text-primary/70">
                                                                             {formatCurrency(product.priceCents, product.currency)}
                                                                             {product.stock !== undefined && ` • ${product.stock} in stock`}
                                                                         </p>
@@ -423,14 +428,14 @@ export default function AdminDashboard() {
 
                                     {/* Orders Tab */}
                                     <TabsContent value="orders">
-                                        <Card>
+                                        <Card className={surfaceClassName}>
                                             <CardHeader>
                                                 <CardTitle>Orders</CardTitle>
                                             </CardHeader>
                                             <CardContent>
                                                 {orders.length === 0 ? (
-                                                    <div className="text-center py-8 text-text-tertiary">
-                                                        <ShoppingCart className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                                                    <div className="py-8 text-center text-text-primary/70">
+                                                        <ShoppingCart className="mx-auto mb-2 h-12 w-12 opacity-50" />
                                                         <p>No orders yet</p>
                                                     </div>
                                                 ) : (
@@ -438,15 +443,15 @@ export default function AdminDashboard() {
                                                         {orders.map((order) => (
                                                             <div
                                                                 key={order.id}
-                                                                className="flex items-center justify-between p-4 border rounded-lg"
+                                                                className="flex items-center justify-between rounded-lg border border-accent/20 bg-bg-3/60 p-4"
                                                             >
                                                                 <div>
                                                                     <p className="font-medium">Order #{order.id.slice(0, 8)}</p>
-                                                                    <p className="text-sm text-text-tertiary">
+                                                                    <p className="text-sm text-text-primary/70">
                                                                         {order.userEmail} • {formatCurrency(order.totalCents, order.currency)}
                                                                     </p>
                                                                     {order.items && order.items.length > 0 && (
-                                                                        <p className="text-xs text-text-tertiary mt-1">
+                                                                        <p className="mt-1 text-xs text-text-primary/70">
                                                                             {order.items.length} item(s)
                                                                         </p>
                                                                     )}
@@ -462,14 +467,14 @@ export default function AdminDashboard() {
 
                                     {/* Payments Tab */}
                                     <TabsContent value="payments">
-                                        <Card>
+                                        <Card className={surfaceClassName}>
                                             <CardHeader>
                                                 <CardTitle>Payments</CardTitle>
                                             </CardHeader>
                                             <CardContent>
                                                 {payments.length === 0 ? (
-                                                    <div className="text-center py-8 text-text-tertiary">
-                                                        <CreditCard className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                                                    <div className="py-8 text-center text-text-primary/70">
+                                                        <CreditCard className="mx-auto mb-2 h-12 w-12 opacity-50" />
                                                         <p>No payments yet</p>
                                                     </div>
                                                 ) : (
@@ -477,13 +482,13 @@ export default function AdminDashboard() {
                                                         {payments.map((payment) => (
                                                             <div
                                                                 key={payment.id}
-                                                                className="flex items-center justify-between p-4 border rounded-lg"
+                                                                className="flex items-center justify-between rounded-lg border border-accent/20 bg-bg-3/60 p-4"
                                                             >
                                                                 <div>
                                                                     <p className="font-medium">
                                                                         {formatCurrency(payment.amountCents, payment.currency)}
                                                                     </p>
-                                                                    <p className="text-sm text-text-tertiary">
+                                                                    <p className="text-sm text-text-primary/70">
                                                                         Order #{payment.orderId.slice(0, 8)}
                                                                         {payment.createdAt && ` • ${new Date(payment.createdAt).toLocaleDateString()}`}
                                                                     </p>

@@ -22,6 +22,7 @@ import { AbortError, InferResponseString } from "../inferutils/core";
 import z from "zod";
 import { createSystemMessage } from "../inferutils/common";
 import { createLogger } from "../../logger";
+import { GenerationContext } from "../domain/values/GenerationContext";
 
 // Constants
 const CHUNK_SIZE = 64;
@@ -290,6 +291,59 @@ const StoreInfoCheckSchema = z.object({
 
 type StoreInfoCheck = z.infer<typeof StoreInfoCheckSchema>;
 
+function heuristicStoreInfoCheck(query: string): StoreInfoCheck {
+    const text = query.toLowerCase();
+
+    const ecommerceKeywords = [
+        'store',
+        'shop',
+        'ecommerce',
+        'e-commerce',
+        'storefront',
+        'boutique',
+        'catalog',
+        'cart',
+        'checkout',
+        'product',
+        'products',
+        'sell',
+    ];
+    const isEcommerce = ecommerceKeywords.some((keyword) => text.includes(keyword));
+
+    if (!isEcommerce) {
+        return {
+            hasStoreName: true,
+            hasDesign: true,
+            askFor: 'skip',
+            reasoning: 'Heuristic: not clearly an ecommerce store request',
+        };
+    }
+
+    const hasDesign = /(modern|minimal|minimalist|vintage|rustic|bold|elegant|playful|aesthetic|style|styling|theme|color|colour|palette|font|typography|layout)/i.test(query);
+
+    const hasExplicitName =
+        /(named|called|name it|store name)\s*[:-]?\s*["'][^"']+["']/i.test(query) ||
+        /(named|called|name it|store name)\s*[:-]?\s*[A-Za-z0-9][A-Za-z0-9\s&'_-]{2,40}/i.test(query);
+
+    const hasStoreName = hasExplicitName;
+
+    let askFor: 'name' | 'design' | 'both' | 'skip' = 'skip';
+    if (!hasStoreName && !hasDesign) {
+        askFor = 'both';
+    } else if (!hasStoreName) {
+        askFor = 'name';
+    } else if (!hasDesign) {
+        askFor = 'design';
+    }
+
+    return {
+        hasStoreName,
+        hasDesign,
+        askFor,
+        reasoning: `Heuristic fallback for ecommerce query (hasStoreName=${hasStoreName}, hasDesign=${hasDesign})`,
+    };
+}
+
 /**
  * Check if store name and design are provided in the initial query
  * This is a standalone function that can be called during initialization
@@ -300,6 +354,7 @@ export async function checkStoreInfoForInitialQuery(
     inferenceContext: InferenceContext
 ): Promise<StoreInfoCheck> {
     const logger = createLogger('StoreInfoCheck');
+    const heuristic = heuristicStoreInfoCheck(query);
 
     const checkPrompt = `Analyze the user's initial prompt to determine if they have provided:
 1. A store name (e.g., "My Store", "TechShop", "Fashion Boutique", "Artisan Crafts", etc.)
@@ -332,17 +387,18 @@ Consider:
         });
 
         const checkResult = result.object as StoreInfoCheck;
+        if (checkResult.askFor === 'skip' && heuristic.askFor !== 'skip') {
+            logger.warn('Store info check returned skip but heuristic indicates missing info, using heuristic fallback', {
+                llm: checkResult,
+                heuristic,
+            });
+            return heuristic;
+        }
         logger.info("Store info check result for initial query", checkResult);
         return checkResult;
     } catch (error) {
         logger.error("Error checking store info for initial query", { error });
-        // Default to skip if check fails (safer to not interrupt)
-        return {
-            hasStoreName: true,
-            hasDesign: true,
-            askFor: 'skip',
-            reasoning: "Check failed, defaulting to skip"
-        };
+        return heuristic;
     }
 }
 
@@ -357,6 +413,7 @@ async function checkStoreInfoProvided(
     options: OperationOptions
 ): Promise<StoreInfoCheck | null> {
     const logger = createLogger('StoreInfoCheck');
+    const heuristic = heuristicStoreInfoCheck(currentUserMessage);
 
     // Only check for the VERY FIRST user message ever in the conversation
     // Check both runningHistory and fullHistory to ensure this is truly the first user message
@@ -403,17 +460,18 @@ Consider:
         });
 
         const checkResult = result.object as StoreInfoCheck;
+        if (checkResult.askFor === 'skip' && heuristic.askFor !== 'skip') {
+            logger.warn('Store info check returned skip but heuristic indicates missing info, using heuristic fallback', {
+                llm: checkResult,
+                heuristic,
+            });
+            return heuristic;
+        }
         logger.info("Store info check result", checkResult);
         return checkResult;
     } catch (error) {
         logger.error("Error checking store info", { error });
-        // Default to skip if check fails (safer to not interrupt)
-        return {
-            hasStoreName: true,
-            hasDesign: true,
-            askFor: 'skip',
-            reasoning: "Check failed, defaulting to skip"
-        };
+        return heuristic;
     }
 }
 
@@ -448,11 +506,11 @@ function buildUserMessageWithContext(userMessage: string, errors: RuntimeError[]
 async function prepareMessagesForInference(env: Env, messages: ConversationMessage[]): Promise<ConversationMessage[]> {
     // For each multimodal image, convert the image to base64 data url
     const processedMessages = await Promise.all(messages.map(m => {
-        return mapImagesInMultiModalMessage(structuredClone(m), async (c) => {
-            let url = c.image_url.url;
-            if (url.includes('base64,')) {
-                return c;
-            }
+		return mapImagesInMultiModalMessage(structuredClone(m), async (c) => {
+			const url = c.image_url.url;
+			if (url.includes('base64,')) {
+				return c;
+			}
             const image = await downloadR2Image(env, url);
             return {
                 ...c,
@@ -466,7 +524,7 @@ async function prepareMessagesForInference(env: Env, messages: ConversationMessa
     return processedMessages;
 }
 
-export class UserConversationProcessor extends AgentOperation<UserConversationInputs, UserConversationOutputs> {
+export class UserConversationProcessor extends AgentOperation<GenerationContext, UserConversationInputs, UserConversationOutputs> {
     /**
      * Remove system context tags from message content
      */
@@ -595,9 +653,9 @@ What visual design style do you have in mind?`;
                 (chunk: string) => inputs.conversationResponseCallback(chunk, aiConversationId, true)
             )).map(td => ({
                 ...td,
-                onStart: (args: Record<string, unknown>) => toolCallRenderer({ name: td.function.name, status: 'start', args }),
+                onStart: (args: Record<string, unknown>) => toolCallRenderer({ name: td.name, status: 'start', args }),
                 onComplete: (args: Record<string, unknown>, result: unknown) => toolCallRenderer({
-                    name: td.function.name,
+                    name: td.name,
                     status: 'success',
                     args,
                     result: typeof result === 'string' ? result : JSON.stringify(result)

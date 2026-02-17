@@ -99,10 +99,7 @@ export class FileManager implements IFileManager {
      * Updates generatedFilesMap and computes diffs, but does NOT touch git.
      * Use commitFiles() to persist recorded files to git.
      */
-    recordFileChanges(files: FileOutputType[], overwrite: boolean = false): FileState[] {
-        const templateDetails = this.getTemplateDetailsFunc();
-        const dontTouchFiles = templateDetails?.dontTouchFiles || new Set<string>();
-
+    recordFileChanges(files: FileOutputType[], _overwrite: boolean = false): FileState[] {
         const filesMap = { ...this.stateManager.getState().generatedFilesMap };
         const fileStates: FileState[] = [];
 

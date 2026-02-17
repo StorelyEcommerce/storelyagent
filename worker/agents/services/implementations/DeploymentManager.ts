@@ -15,9 +15,12 @@ import { BaseSandboxService } from 'worker/services/sandbox/BaseSandboxService';
 import { getSandboxService } from '../../../services/sandbox/factory';
 import { validateAndCleanBootstrapCommands } from 'worker/agents/utils/common';
 import { isBackendReadOnlyFile } from 'worker/services/sandbox/utils';
+import { BaseProjectState, CurrentDevState } from '../../core/state';
+import { DeploymentTarget } from '../../core/types';
+import { customizeTemplateFiles } from '../../utils/templateCustomizer';
 
-const PER_ATTEMPT_TIMEOUT_MS = 60000;  // 60 seconds per individual attempt
-const MASTER_DEPLOYMENT_TIMEOUT_MS = 300000;  // 5 minutes total
+const PER_ATTEMPT_TIMEOUT_MS = 180000;  // 3 minutes per individual attempt (covers cold setup + install)
+const MASTER_DEPLOYMENT_TIMEOUT_MS = 600000;  // 10 minutes total across retries
 const HEALTH_CHECK_INTERVAL_MS = 30000;
 
 /**
@@ -29,6 +32,7 @@ export class DeploymentManager extends BaseAgentService<BaseProjectState> implem
     private healthCheckInterval: ReturnType<typeof setInterval> | null = null;
     private currentDeploymentPromise: Promise<PreviewType | null> | null = null;
     private cachedSandboxClient: BaseSandboxService | null = null;
+    private latestDeploymentCallbacks: SandboxDeploymentCallbacks | null = null;
 
     constructor(
         options: ServiceOptions<BaseProjectState>,
@@ -191,12 +195,33 @@ export class DeploymentManager extends BaseAgentService<BaseProjectState> implem
                         logger.info("Deep debugging active, skipping redeploy");
                         return;
                     }
+                    const agentState = this.getState();
+                    if (
+                        agentState.shouldBeGenerating ||
+                        agentState.currentDevState !== CurrentDevState.IDLE
+                    ) {
+                        logger.info('Generation in progress, skipping health-check redeploy', {
+                            shouldBeGenerating: agentState.shouldBeGenerating,
+                            currentDevState: agentState.currentDevState,
+                        });
+                        return;
+                    }
+                    if (this.currentDeploymentPromise) {
+                        logger.info('Deployment already in progress, skipping health-check redeploy');
+                        return;
+                    }
                     logger.warn(`Instance ${instanceId} unhealthy, triggering redeploy`);
                     this.clearHealthCheckInterval();
 
                     // Trigger redeploy to recover from unhealthy state
                     try {
-                        await this.deployToSandbox();
+                        await this.deployToSandbox(
+                            [],
+                            false,
+                            undefined,
+                            false,
+                            this.latestDeploymentCallbacks ?? undefined,
+                        );
                         logger.info('Instance redeployed successfully after health check failure');
                     } catch (redeployError) {
                         logger.error('Failed to redeploy after health check failure:', redeployError);
@@ -281,8 +306,8 @@ export class DeploymentManager extends BaseAgentService<BaseProjectState> implem
 
         let errors = resp.errors || [];
 
-        // Filter out 'failed to connect to websocket' errors
-        errors = errors.filter(e => e.message.includes('[vite] failed to connect to websocket'));
+        // Filter out noisy Vite websocket disconnect noise from runtime error stream
+        errors = errors.filter(e => !e.message.includes('[vite] failed to connect to websocket'));
 
         if (errors.length > 0) {
             logger.info(`Found ${errors.length} runtime errors: ${errors.map(e => e.message).join(', ')}`);
@@ -306,6 +331,10 @@ export class DeploymentManager extends BaseAgentService<BaseProjectState> implem
     ): Promise<PreviewType | null> {
         const logger = this.getLog();
         const deployStartTime = Date.now();
+        if (callbacks) {
+            this.latestDeploymentCallbacks = callbacks;
+        }
+        const effectiveCallbacks = callbacks ?? this.latestDeploymentCallbacks ?? undefined;
 
         logger.info('🚀 [DEPLOY_TO_SANDBOX] Deploy to sandbox requested', {
             filesCount: files.length,
@@ -313,7 +342,7 @@ export class DeploymentManager extends BaseAgentService<BaseProjectState> implem
             commitMessage,
             clearLogs,
             sessionId: this.getSessionId(),
-            hasCallbacks: !!callbacks
+            hasCallbacks: !!effectiveCallbacks
         });
 
         // All concurrent callers wait on the same promise
@@ -357,7 +386,7 @@ export class DeploymentManager extends BaseAgentService<BaseProjectState> implem
             redeploy,
             commitMessage,
             clearLogs,
-            callbacks
+            effectiveCallbacks
         );
 
         try {
@@ -383,11 +412,15 @@ export class DeploymentManager extends BaseAgentService<BaseProjectState> implem
         } catch (error) {
             // Master timeout reached - all retries exhausted
             const totalDuration = Date.now() - deployStartTime;
+            const errorMsg = error instanceof Error ? error.message : String(error);
             logger.error('❌ [DEPLOY_TO_SANDBOX] Deployment permanently failed after master timeout', {
                 totalDurationMs: totalDuration,
                 timeoutMs: MASTER_DEPLOYMENT_TIMEOUT_MS,
-                error: error instanceof Error ? error.message : 'Unknown error',
+                error: errorMsg,
                 errorStack: error instanceof Error ? error.stack : undefined
+            });
+            effectiveCallbacks?.onError?.({
+                error: `Deployment failed after retries: ${errorMsg}`,
             });
             return null;
         } finally {
@@ -568,11 +601,6 @@ export class DeploymentManager extends BaseAgentService<BaseProjectState> implem
                     sandboxInstanceId: undefined
                 });
 
-                logger.info('📢 [RETRY_LOOP] Sending deployment error callback', { attempt });
-                callbacks?.onError?.({
-                    error: `Deployment attempt ${attempt} failed: ${errorMsg}`
-                });
-
                 // Exponential backoff before retry (capped at 30 seconds)
                 const backoffMs = Math.min(1000 * Math.pow(2, Math.min(attempt - 1, 5)), 30000);
                 logger.info(`⏳ [RETRY_LOOP] Retrying deployment in ${backoffMs}ms...`, {
@@ -715,6 +743,16 @@ export class DeploymentManager extends BaseAgentService<BaseProjectState> implem
                 });
             }
 
+            const failedThemeFiles = failedFiles.filter(f => f.file.startsWith('storefront-app/theme/'));
+            if (failedThemeFiles.length > 0) {
+                logger.error('❌ [DEPLOY] Critical storefront theme files failed to write', {
+                    failedThemeFiles,
+                    totalFailedCount: failedCount,
+                    instanceId: sandboxInstanceId
+                });
+                throw new Error(`Critical storefront files failed to deploy: ${failedThemeFiles.map(f => f.file).join(', ')}`);
+            }
+
             // Log if we're missing expected storefront files
             const expectedStorefrontFiles = filesToWrite.filter(f => f.filePath.startsWith('storefront-app/'));
             const writtenStorefrontFiles = successfulStorefrontFiles;
@@ -727,10 +765,25 @@ export class DeploymentManager extends BaseAgentService<BaseProjectState> implem
                     writtenCount: writtenStorefrontFiles.length,
                     missingFiles: missingStorefrontFiles
                 });
+
+                const missingThemeFiles = missingStorefrontFiles.filter(path => path.startsWith('storefront-app/theme/'));
+                if (missingThemeFiles.length > 0) {
+                    logger.error('❌ [DEPLOY] Missing critical storefront theme files after write', {
+                        instanceId: sandboxInstanceId,
+                        missingThemeFiles
+                    });
+                    throw new Error(`Critical storefront files missing after deploy: ${missingThemeFiles.join(', ')}`);
+                }
             }
-        } else {
-            logger.info("⏭️ [DEPLOY] No files to write, skipping file write step");
-        }
+	        } else {
+	            logger.error("❌ [DEPLOY] No files to write - refusing silent deployment success", {
+	                sandboxInstanceId,
+	                requestedFilesCount: files.length,
+	                generatedFilesCount: Object.keys(state.generatedFilesMap || {}).length,
+	                redeployed
+	            });
+	            throw new Error('No files resolved for deployment. Refusing to mark deployment as successful.');
+	        }
 
         // Clear logs if requested
         if (clearLogs) {
@@ -890,11 +943,14 @@ export class DeploymentManager extends BaseAgentService<BaseProjectState> implem
     private async createNewInstance(): Promise<BootstrapResponse | null> {
         const state = this.getState();
         const projectName = state.projectName;
+        const templateName = state.templateName;
+        const previewDomain = state.hostname || undefined;
         const logger = this.getLog();
 
         logger.info("🏗️ [CREATE_INSTANCE] Starting instance creation", {
             templateName,
             projectName,
+            previewDomain,
             sessionId: this.getSessionId()
         });
 
@@ -925,20 +981,50 @@ export class DeploymentManager extends BaseAgentService<BaseProjectState> implem
         const client = this.getClient();
         const finalProjectName = `v1-${projectName}`;
 
+        // Build create-instance payload from current files, then apply template
+        // customizations in-memory so backend bootstrap migrations are preserved
+        // even though backend files are read-only for iterative deployments.
+        const allFilesMap = new Map<string, string>();
+        for (const file of this.fileManager.getAllFiles()) {
+            allFilesMap.set(file.filePath, file.fileContents);
+        }
+
+        const customizedFiles = customizeTemplateFiles(
+            Object.fromEntries(allFilesMap),
+            {
+                projectName,
+                commandsHistory: state.commandsHistory || []
+            }
+        );
+
+        for (const [filePath, fileContents] of Object.entries(customizedFiles)) {
+            if (typeof fileContents === 'string') {
+                allFilesMap.set(filePath, fileContents);
+            }
+        }
+
+        const createInstanceFiles = Array.from(allFilesMap.entries()).map(([filePath, fileContents]) => ({
+            filePath,
+            fileContents
+        }));
+
         logger.info("📞 [CREATE_INSTANCE] Calling sandbox client createInstance", {
             templateName,
             projectName: finalProjectName,
+            previewDomain,
             hasEnvVars: Object.keys(localEnvVars).length > 0,
-            envVarKeys: Object.keys(localEnvVars)
+            envVarKeys: Object.keys(localEnvVars),
+            filesCount: createInstanceFiles.length
         });
 
         const createStartTime = Date.now();
-        const createResponse = await client.createInstance(
-            templateName,
-            finalProjectName,
-            undefined,
-            localEnvVars
-        );
+        const createResponse = await client.createInstance({
+            files: createInstanceFiles,
+            projectName: finalProjectName,
+            previewDomain,
+            envVars: localEnvVars,
+            initCommand: 'bun run dev',
+        });
         const createDuration = Date.now() - createStartTime;
 
         logger.info("📊 [CREATE_INSTANCE] createInstance call completed", {
@@ -1090,6 +1176,9 @@ export class DeploymentManager extends BaseAgentService<BaseProjectState> implem
         const state = this.getState();
         const logger = this.getLog();
         const client = this.getClient();
+        const callbacks = request?.callbacks;
+        const target = request?.target;
+        void target;
 
         await this.waitForPreview();
 
@@ -1098,23 +1187,38 @@ export class DeploymentManager extends BaseAgentService<BaseProjectState> implem
             instanceId: state.sandboxInstanceId ?? ''
         });
 
-        logger.info('Starting Cloudflare deployment');
+	        logger.info('Starting Cloudflare deployment');
 
-        // Check if we have generated files
-        if (!state.generatedFilesMap || Object.keys(state.generatedFilesMap).length === 0) {
-            logger.error('No generated files available for deployment');
+	        // Check if we have generated files
+	        if (!state.generatedFilesMap || Object.keys(state.generatedFilesMap).length === 0) {
+	            logger.error('No generated files available for deployment');
             callbacks?.onError?.({
                 message: 'Deployment failed: No generated code available',
                 instanceId: state.sandboxInstanceId ?? '',
                 error: 'No files have been generated yet'
             });
-            return { deploymentUrl: null };
-        }
+	            return { deploymentUrl: null };
+	        }
 
-        // Ensure sandbox instance exists - return null to trigger agent orchestration
-        if (!state.sandboxInstanceId) {
-            logger.info('No sandbox instance ID available');
-            return { deploymentUrl: null };
+	        const generatedFilePaths = Object.keys(state.generatedFilesMap);
+	        const generatedThemeFiles = generatedFilePaths.filter((filePath) => filePath.startsWith('storefront-app/theme/'));
+	        if (state.templateName === 'base-store' && generatedThemeFiles.length === 0) {
+	            logger.error('Refusing Cloudflare deployment: no generated storefront theme files detected', {
+	                generatedFilesCount: generatedFilePaths.length,
+	                generatedFilePathsSample: generatedFilePaths.slice(0, 40)
+	            });
+	            callbacks?.onError?.({
+	                message: 'Deployment blocked: storefront theme was not generated',
+	                instanceId: state.sandboxInstanceId ?? '',
+	                error: 'No generated storefront theme files found. Refusing to deploy base template unchanged.'
+	            });
+	            return { deploymentUrl: null };
+	        }
+
+	        // Ensure sandbox instance exists - return null to trigger agent orchestration
+	        if (!state.sandboxInstanceId) {
+	            logger.info('No sandbox instance ID available');
+	            return { deploymentUrl: null };
         }
 
         logger.info('Prerequisites met, initiating deployment', {

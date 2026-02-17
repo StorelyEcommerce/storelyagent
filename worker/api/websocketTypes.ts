@@ -1,5 +1,5 @@
 import type { CodeReviewOutputType, FileConceptType, FileOutputType } from "../agents/schemas";
-import type { AgentState } from "../agents/core/state";
+import type { AgentState, CodeGenState } from "../agents/core/state";
 import type { ConversationState } from "../agents/inferutils/common";
 import type { CodeIssue, RuntimeError, StaticAnalysisResponse, TemplateDetails } from "../services/sandbox/sandboxTypes";
 import type { CodeFixResult } from "../services/code-fixer";
@@ -19,9 +19,14 @@ type StateMessage = {
 type AgentConnectedMessage = {
 	type: 'agent_connected';
 	state: CodeGenState;
-	templateDetails: TemplateDetails;
+	templateDetails?: TemplateDetails | null;
 	previewURL?: string;
 	tunnelURL?: string;
+};
+
+type TemplateUpdatedMessage = {
+	type: 'template_updated';
+	templateDetails: TemplateDetails;
 };
 
 type ConversationStateMessage = {
@@ -607,6 +612,7 @@ export type WebSocketMessage =
 	| ConversationClearedMessage
 	| ProjectNameUpdatedMessage
 	| BlueprintUpdatedMessage
+	| BlueprintChunkMessage
 	| DeterministicCodeFixStartedMessage
 	| DeterministicCodeFixCompletedMessage
 	| ModelConfigsInfoMessage

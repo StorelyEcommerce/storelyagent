@@ -1,6 +1,6 @@
 import { tool, t, ErrorResult } from '../types';
 import { StructuredLogger } from '../../../logger';
-import { CodingAgentInterface } from 'worker/agents/services/implementations/CodingAgent';
+import type { ICodingAgent } from 'worker/agents/services/interfaces/ICodingAgent';
 import { isBackendReadOnlyFile } from 'worker/services/sandbox/utils';
 
 export type RegenerateFileArgs = {

@@ -31,16 +31,18 @@ export function parseStoreStyleSelection(message: string, maxOptions: number): n
 }
 
 function buildStylePrompt(storeInfo: string): string {
-	return `Create a high-fidelity website homepage design concept for an ecommerce store.
+	return `Create three clearly distinct high-fidelity website homepage design concepts for an ecommerce store.
 Store info and design direction: ${storeInfo}
 
 Requirements:
 - Full-page website layout (hero, navigation, featured products, footer)
 - Strong typography and color system
+- Each option must use a different visual lane (for example: minimalist/editorial, bold/experimental, organic/handcrafted)
+- Ensure options differ in typography mood, color strategy, spacing density, and component shape language
 - No brand logos or real-world trademarks
 - Avoid readable body text (use abstract shapes or blurred text)
 - Make it look like a modern storefront website mockup
-- Keep the style consistent and usable for a real website`;
+- Keep each style consistent and usable for a real website`;
 }
 
 function buildImageAttachment(base64Data: string, index: number): ImageAttachment {
@@ -64,10 +66,11 @@ export async function generateStoreStyleImages({
 	storeInfo: string;
 	count?: number;
 }): Promise<ProcessedImageAttachment[]> {
+	const userId = inferenceContext.userId ?? inferenceContext.metadata?.userId ?? 'anonymous';
 	const { apiKey, baseURL, defaultHeaders } = await getConfigurationForModel(
 		IMAGE_MODEL,
 		env,
-		inferenceContext.userId,
+		userId,
 	);
 	const client = new OpenAI({ apiKey, baseURL, defaultHeaders });
 	const prompt = buildStylePrompt(storeInfo);

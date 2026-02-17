@@ -101,6 +101,7 @@ interface InferenceParamsBase {
     context: InferenceContext;
     onAssistantMessage?: (message: Message) => Promise<void>;
     completionConfig?: CompletionConfig;
+    modelConfig?: ModelConfig;
 }
 
 interface InferenceParamsStructured<T extends z.AnyZodObject> extends InferenceParamsBase {
@@ -133,36 +134,31 @@ export async function executeInference<T extends z.AnyZodObject>(   {
     context,
     onAssistantMessage,
     completionConfig,
+    modelConfig,
 }: InferenceParamsBase &    {
     schema?: T;
     format?: SchemaFormat;
 }): Promise<InferResponseString | InferResponseObject<T>> {
-    let conf: ModelConfig | undefined;
-    
-    if (modelConfig) {
-        // Use explicitly provided model config
-        conf = modelConfig;
-    } else if (context?.userId && context?.userModelConfigs) {
-        // Try to get user-specific configuration from context cache
-        conf = context.userModelConfigs[agentActionName];
-        if (conf) {
-            logger.info(`Using user configuration for ${agentActionName}: ${JSON.stringify(conf)}`);
-        } else {
-            logger.info(`No user configuration for ${agentActionName}, using AGENT_CONFIG defaults`);
-        }
-    }
+    const userConfig = context?.userModelConfigs instanceof Map
+        ? context.userModelConfigs.get(agentActionName as string)
+        : context?.userModelConfigs?.[agentActionName];
+    const resolvedConfig = resolveModelConfig(agentActionName, modelConfig ?? userConfig);
 
     modelName = modelName || resolvedConfig.name;
     temperature = temperature ?? resolvedConfig.temperature ?? 0.2;
     maxTokens = maxTokens || resolvedConfig.max_tokens || 16000;
     reasoning_effort = reasoning_effort || resolvedConfig.reasoning_effort;
+    const metadata = context.metadata ?? {
+        agentId: context.agentId ?? 'unknown-agent',
+        userId: context.userId ?? 'unknown-user',
+    };
 
     // Exponential backoff for retries
     const backoffMs = (attempt: number) => Math.min(500 * Math.pow(2, attempt), 10000);
 
     let useFallbackModel = false;
-    // Use the configured fallback model, or default to GPT-5.2
-    const fallbackModelName = finalConf?.fallbackModel || AIModels.OPENAI_5_2;
+    // Use the configured fallback model, or default to OpenRouter MiniMax M2.1
+    const fallbackModelName = resolvedConfig.fallbackModel || AIModels.OPENROUTER_MINIMAX_M2_1;
 
     for (let attempt = 0; attempt < retryLimit; attempt++) {
         const currentModel = useFallbackModel ? fallbackModelName : modelName;
@@ -171,7 +167,7 @@ export async function executeInference<T extends z.AnyZodObject>(   {
 
             const result = schema ? await infer<T>({
                 env,
-                metadata: context.metadata,
+                metadata,
                 messages,
                 schema,
                 schemaName: agentActionName,
@@ -192,7 +188,7 @@ export async function executeInference<T extends z.AnyZodObject>(   {
                 runtimeOverrides: context.runtimeOverrides,
             }) : await infer({
                 env,
-                metadata: context.metadata,
+                metadata,
                 messages,
                 maxTokens,
                 modelName: currentModel,

@@ -41,6 +41,18 @@ export class AppService extends BaseService {
         FORKS: 5
     };
 
+    private async enrichScreenshotUrls<T extends { id: string; screenshotUrl?: string | null }>(apps: T[]): Promise<T[]> {
+        try {
+            const security = new ScreenshotSecurity(this.env);
+            return await security.enrichUrls(apps);
+        } catch (error) {
+            this.logger.warn('Failed to enrich screenshot URLs, returning raw URLs', {
+                error: error instanceof Error ? error.message : String(error),
+            });
+            return apps;
+        }
+    }
+
 
 
     // ========================================
@@ -617,7 +629,7 @@ export class AppService extends BaseService {
                 .then(r => !!r) : false
         ]);
 
-        return {
+        const result = {
             ...app,
             userName: appResult.userName,
             userAvatar: appResult.userAvatar,
@@ -738,7 +750,7 @@ export class AppService extends BaseService {
                 .limit(limit)
                 .offset(offset);
 
-            return results.map(r => ({
+            const starredApps = results.map(r => ({
                 ...r.app,
                 userName: r.userName,
                 userAvatar: r.userAvatar,
@@ -769,7 +781,7 @@ export class AppService extends BaseService {
         const appIds = basicApps.map((row: RankedAppQueryResult) => row.app.id);
         const { userStars, userFavorites } = await this.addUserSpecificAppData(appIds, userId);
 
-        return basicApps.map((row: RankedAppQueryResult) => ({
+        const normalApps = basicApps.map((row: RankedAppQueryResult) => ({
             ...row.app,
             userName: row.userName,
             userAvatar: row.userAvatar,

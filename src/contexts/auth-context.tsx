@@ -219,6 +219,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           expiresAt: response.data.expiresAt,
         });
         setupTokenRefresh();
+
+        // Auth endpoints rotate CSRF cookies; refresh client cache before next write request.
+        await apiClient.refreshCsrfToken();
         
         // Navigate to intended URL or default to home
         const intendedUrl = getIntendedUrl();
@@ -257,6 +260,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           expiresAt: response.data.expiresAt,
         });
         setupTokenRefresh();
+
+        // Auth endpoints rotate CSRF cookies; refresh client cache before next write request.
+        await apiClient.refreshCsrfToken();
         
         // Navigate to intended URL or default to home
         const intendedUrl = getIntendedUrl();
@@ -284,6 +290,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.error('Logout error:', error);
     } finally {
       // Clear state regardless of API response
+      apiClient.invalidateCsrfTokenCache();
       setUser(null);
       setToken(null);
       setSession(null);

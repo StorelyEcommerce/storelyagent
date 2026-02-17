@@ -7,6 +7,8 @@
 
 import type { ProjectType, BehaviorType, ExportOptions } from '../types';
 
+const PROJECT_TYPE_VALUES = ['app', 'workflow', 'presentation', 'general'] as const;
+
 export interface PlatformCapabilitiesConfig {
 	features: {
 		app: { enabled: boolean };
@@ -181,9 +183,26 @@ export const DEFAULT_FEATURE_DEFINITIONS: Record<ProjectType, Omit<FeatureDefini
 	},
 };
 
+export function isProjectType(value: unknown): value is ProjectType {
+	return (
+		typeof value === 'string' &&
+		(PROJECT_TYPE_VALUES as readonly string[]).includes(value)
+	);
+}
+
+export function normalizeProjectType(
+	value: unknown,
+	fallback: ProjectType = 'app',
+): ProjectType {
+	return isProjectType(value) ? value : fallback;
+}
+
 /**
  * Helper to get the behavior type for a project type.
  */
-export function getBehaviorTypeForProject(projectType: ProjectType): BehaviorType {
-	return DEFAULT_FEATURE_DEFINITIONS[projectType].capabilities.behaviorType;
+export function getBehaviorTypeForProject(
+	projectType: ProjectType | string | null | undefined,
+): BehaviorType {
+	const normalizedType = normalizeProjectType(projectType);
+	return DEFAULT_FEATURE_DEFINITIONS[normalizedType].capabilities.behaviorType;
 }

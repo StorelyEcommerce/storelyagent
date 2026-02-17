@@ -9,5 +9,7 @@ export type {
 
 export {
 	DEFAULT_FEATURE_DEFINITIONS,
+	isProjectType,
+	normalizeProjectType,
 	getBehaviorTypeForProject,
 } from './types';

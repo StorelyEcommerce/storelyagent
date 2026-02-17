@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { setSentryUser, clearSentryUser } from '@/utils/sentry';
+import { addBreadcrumb, clearSentryUser, setSentryUser } from '@/utils/sentry';
 import { AuthUser } from '@/api-types';
 
 /**
@@ -25,8 +25,6 @@ export function useSentryUser(user: AuthUser | null) {
  */
 export function useSentryBreadcrumb() {
   return (message: string, data?: Record<string, any>) => {
-    import('@/utils/sentry').then(({ addBreadcrumb }) => {
-      addBreadcrumb(message, 'user-action', 'info', data);
-    });
+    addBreadcrumb(message, 'user-action', 'info', data);
   };
 }

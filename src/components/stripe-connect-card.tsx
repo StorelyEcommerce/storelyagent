@@ -3,7 +3,7 @@
  * Shows Stripe Connect status and allows connecting/disconnecting Stripe accounts
  */
 
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { CreditCard, ExternalLink, RefreshCw, Unlink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -28,68 +28,68 @@ interface StripeConnectCardProps {
 }
 
 export function StripeConnectCard({ className }: StripeConnectCardProps) {
-    const [status, setStatus] = useState<StripeConnectStatusData | null>(null);
-    const [loading, setLoading] = useState(true);
-    const [connecting, setConnecting] = useState(false);
-    const [disconnecting, setDisconnecting] = useState(false);
+	const [status, setStatus] = useState<StripeConnectStatusData | null>(null);
+	const [loading, setLoading] = useState(true);
+	const [connecting, setConnecting] = useState(false);
+	const [disconnecting, setDisconnecting] = useState(false);
 
-    // Check URL params for return from Stripe
-    useEffect(() => {
-        const params = new URLSearchParams(window.location.search);
-        const stripeReturn = params.get('stripe_return');
-        const stripeRefresh = params.get('stripe_refresh');
+	const loadStatus = useCallback(async () => {
+		try {
+			setLoading(true);
+			const response = await apiClient.getStripeConnectStatus();
+			if (response.success && response.data) {
+				setStatus(response.data);
+			}
+		} catch (error) {
+			console.error('Error loading Stripe status:', error);
+		} finally {
+			setLoading(false);
+		}
+	}, []);
 
-        if (stripeReturn === 'true') {
-            // User returned from Stripe onboarding - refresh status
-            refreshStatus();
-            // Clean up URL
-            const url = new URL(window.location.href);
-            url.searchParams.delete('stripe_return');
-            window.history.replaceState({}, '', url.toString());
-        } else if (stripeRefresh === 'true') {
+	const refreshStatus = useCallback(async () => {
+		try {
+			setLoading(true);
+			const response = await apiClient.refreshStripeConnectStatus();
+			if (response.success && response.data) {
+				setStatus(response.data);
+				toast.success('Stripe account status updated');
+			}
+		} catch (error) {
+			console.error('Error refreshing Stripe status:', error);
+			// Fall back to regular status check
+			await loadStatus();
+		} finally {
+			setLoading(false);
+		}
+	}, [loadStatus]);
+
+	// Check URL params for return from Stripe
+	useEffect(() => {
+		const params = new URLSearchParams(window.location.search);
+		const stripeReturn = params.get('stripe_return');
+		const stripeRefresh = params.get('stripe_refresh');
+
+		if (stripeReturn === 'true') {
+			// User returned from Stripe onboarding - refresh status
+			void refreshStatus();
+			// Clean up URL
+			const url = new URL(window.location.href);
+			url.searchParams.delete('stripe_return');
+			window.history.replaceState({}, '', url.toString());
+		} else if (stripeRefresh === 'true') {
             // Onboarding link expired - try again
             toast.info('Your onboarding session expired. Please try again.');
             const url = new URL(window.location.href);
-            url.searchParams.delete('stripe_refresh');
-            window.history.replaceState({}, '', url.toString());
-        }
-    }, []);
+			url.searchParams.delete('stripe_refresh');
+			window.history.replaceState({}, '', url.toString());
+		}
+	}, [refreshStatus]);
 
-    // Load initial status
-    useEffect(() => {
-        loadStatus();
-    }, []);
-
-    const loadStatus = async () => {
-        try {
-            setLoading(true);
-            const response = await apiClient.getStripeConnectStatus();
-            if (response.success && response.data) {
-                setStatus(response.data);
-            }
-        } catch (error) {
-            console.error('Error loading Stripe status:', error);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const refreshStatus = async () => {
-        try {
-            setLoading(true);
-            const response = await apiClient.refreshStripeConnectStatus();
-            if (response.success && response.data) {
-                setStatus(response.data);
-                toast.success('Stripe account status updated');
-            }
-        } catch (error) {
-            console.error('Error refreshing Stripe status:', error);
-            // Fall back to regular status check
-            await loadStatus();
-        } finally {
-            setLoading(false);
-        }
-    };
+	// Load initial status
+	useEffect(() => {
+		void loadStatus();
+	}, [loadStatus]);
 
     const handleConnect = async () => {
         try {

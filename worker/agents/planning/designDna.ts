@@ -15,11 +15,15 @@ Generate a concrete, implementation-ready "Design DNA" for a storefront.
 Rules:
 - User prompt style cues are the primary source of truth.
 - If user style cues conflict with inferred template style labels, prioritize the user's cues.
+- Lock into a distinct visual lane (not a generic default look).
 - Prioritize distinctive but usable design decisions.
 - Keep guidance actionable for frontend implementation.
 - Avoid vague advice; prefer precise constraints and motifs.
 - Do not request external assets or paid services.
-- Keep all suggestions compatible with modern responsive storefronts.`;
+- Keep all suggestions compatible with modern responsive storefronts.
+- Explicitly describe mobile, tablet, and desktop adaptations for the same design language.
+- Avoid generic fallback aesthetics like "rounded cards + soft gradient + neutral sans" unless the user explicitly asked for that.
+- Every section must contain concrete directives that would make this storefront look different from a generic starter template.`;
 
 export interface DesignDNAGenerationArgs {
 	env: Env;
@@ -58,7 +62,13 @@ User-derived style signals from the prompt text: ${userStyleSignals.length > 0 ?
 ${styleHint}
 ${useCaseHint}
 
-Produce a detailed design DNA that will steer blueprint generation and all implementation phases.`;
+Produce a detailed design DNA that will steer blueprint generation and all implementation phases.
+
+Quality gates:
+- Make the visual direction visibly specific to this client request and niche.
+- Include one "signature" visual motif that should repeat across key sections.
+- Include responsive behavior guidance so the style stays expressive on mobile, tablet, and desktop.
+- Anti-patterns should explicitly call out the generic look to avoid for this request.`;
 
 	const userMessage = images && images.length > 0
 		? createMultiModalUserMessage(

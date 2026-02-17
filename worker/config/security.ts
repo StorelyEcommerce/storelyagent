@@ -41,20 +41,34 @@ export function getConfigurableSecurityDefaults(): ConfigurableSecuritySettings 
  */
 export function getAllowedOrigins(env: Env): string[] {
     const origins: string[] = [];
+    const addOrigin = (origin: string) => {
+        if (!origins.includes(origin)) {
+            origins.push(origin);
+        }
+    };
     
     // Production domains
     if (env.CUSTOM_DOMAIN) {
-        origins.push(`https://${env.CUSTOM_DOMAIN}`);
+        const customDomain = env.CUSTOM_DOMAIN.trim();
+        if (customDomain.startsWith('http://') || customDomain.startsWith('https://')) {
+            addOrigin(customDomain);
+        } else if (customDomain.includes('localhost') || customDomain.includes('127.0.0.1')) {
+            // Local custom domains are commonly served over http in dev.
+            addOrigin(`http://${customDomain}`);
+            addOrigin(`https://${customDomain}`);
+        } else {
+            addOrigin(`https://${customDomain}`);
+        }
     }
     
     // Development origins (only in development)
     if (isDev(env)) {
-        origins.push('http://localhost:3000');
-        origins.push('http://localhost:5173');
-        origins.push('http://localhost:8787');
-        origins.push('http://127.0.0.1:3000');
-        origins.push('http://127.0.0.1:5173');
-        origins.push('http://127.0.0.1:8787');
+        addOrigin('http://localhost:3000');
+        addOrigin('http://localhost:5173');
+        addOrigin('http://localhost:8787');
+        addOrigin('http://127.0.0.1:3000');
+        addOrigin('http://127.0.0.1:5173');
+        addOrigin('http://127.0.0.1:8787');
     }
     
     return origins;
@@ -63,6 +77,28 @@ export function getAllowedOrigins(env: Env): string[] {
 export function isOriginAllowed(env: Env, origin: string): boolean {
     const allowedOrigins = getAllowedOrigins(env);
     if (!origin) return false;
+
+    // In local/dev setups, allow any localhost/loopback port to support dynamic Vite ports.
+    const localDomainHints = [env.CUSTOM_DOMAIN, env.CUSTOM_PREVIEW_DOMAIN]
+        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+        .map(value => value.toLowerCase());
+    const allowsLoopbackOrigins = isDev(env) || localDomainHints.some(value =>
+        value.includes('localhost') || value.includes('127.0.0.1') || value.includes('::1')
+    );
+
+    if (allowsLoopbackOrigins) {
+        try {
+            const parsed = new URL(origin);
+            const isHttp = parsed.protocol === 'http:' || parsed.protocol === 'https:';
+            const host = parsed.hostname;
+            const isLoopbackHost = host === 'localhost' || host === '127.0.0.1' || host === '::1';
+            if (isHttp && isLoopbackHost) {
+                return true;
+            }
+        } catch {
+            // Fall through to exact-match allowlist
+        }
+    }
     
     // Check against allowed origins
     return allowedOrigins.includes(origin);

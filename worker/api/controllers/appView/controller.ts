@@ -11,7 +11,7 @@ import {
 } from './types';
 import { AgentSummary } from '../../../agents/core/types';
 import { createLogger } from '../../../logger';
-import { buildUserWorkerUrl, buildGitCloneUrl } from 'worker/utils/urls';
+import { buildUserWorkerUrl, buildGitCloneUrl, normalizePreviewUrlForRequest } from 'worker/utils/urls';
 import { JWTUtils } from '../../../utils/jwtUtils';
 
 export class AppViewController extends BaseController {
@@ -61,7 +61,10 @@ export class AppViewController extends BaseController {
                 const agentStub = await getAgentStubLightweight(env, appResult.id);
                 agentSummary = await agentStub.getSummary();
 
-                previewUrl = await agentStub.getPreviewUrlCache();
+                previewUrl = normalizePreviewUrlForRequest(
+                    await agentStub.getPreviewUrlCache(),
+                    request.url
+                ) || '';
             } catch (agentError) {
                 // If agent doesn't exist or error occurred, fall back to database stored files
                 this.logger.warn('Could not fetch agent state, using stored files:', agentError);

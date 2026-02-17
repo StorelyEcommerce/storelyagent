@@ -78,7 +78,7 @@ type TemplateQueryArgs = {
     inferenceContext: InferenceContext;
     query: string;
     projectType: ProjectType | 'auto';
-    images: ImageAttachment[] | undefined;
+    images: Array<ImageAttachment | ProcessedImageAttachment> | undefined;
     logger: StructuredLogger;
     selectedTemplate?: string;
 };
@@ -86,13 +86,13 @@ type TemplateQueryArgs = {
 async function handleGeneralType(): Promise<TemplateQueryResult> {
     const scratch = createScratchTemplateDetails();
     const selection: TemplateSelection = {
+        projectName: 'scratch-project',
         selectedTemplateName: null,
         reasoning: 'General (from-scratch) mode: no template selected',
         useCase: 'General',
         complexity: 'moderate',
         styleSelection: 'Custom',
-        projectType: 'general',
-    } as TemplateSelection;
+    };
     return { templateDetails: scratch, selection, projectType: 'general' };
 }
 
@@ -118,12 +118,12 @@ async function handleUserSelectedTemplate(
     }
 
     const selection: TemplateSelection = {
+        projectName: matchedTemplate.name,
         selectedTemplateName: matchedTemplate.name,
         reasoning: 'User-specified template (AI selection bypassed)',
         useCase: 'General',
         complexity: 'moderate',
         styleSelection: 'Custom',
-        projectType: matchedTemplate.projectType || 'app',
     };
 
     return {
@@ -185,37 +185,22 @@ export async function getTemplateForQuery(
     logger: StructuredLogger,
     selectedTemplate?: string,
 ): Promise<TemplateQueryResult> {
-    // Flow 1: General type - start from scratch
-    if (projectType === 'general') {
-        return handleGeneralType();
+    if (selectedTemplate) {
+        return handleUserSelectedTemplate(selectedTemplate, logger);
     }
 
-    const analyzeQueryResponse = await selectTemplate({
+    const result = await handleAITemplateSelection({
         env,
         inferenceContext,
         query,
-        availableTemplates: templatesResponse.templates,
+        projectType: 'auto',
         images,
+        logger,
     });
-    
-    logger.info('Selected template', { selectedTemplate: analyzeQueryResponse });
-            
-    if (!analyzeQueryResponse.selectedTemplateName) {
-        logger.error('No suitable template found for code generation');
-        throw new Error('No suitable template found for code generation');
+
+    if (result.projectType === 'general') {
+        return handleGeneralType();
     }
-            
-    const selectedTemplate = templatesResponse.templates.find(template => template.name === analyzeQueryResponse.selectedTemplateName);
-    if (!selectedTemplate) {
-        logger.error('Selected template not found');
-        throw new Error('Selected template not found');
-    }
-    const templateDetailsResponse = await BaseSandboxService.getTemplateDetails(selectedTemplate.name);
-    if (!templateDetailsResponse.success || !templateDetailsResponse.templateDetails) {
-        logger.error('Failed to fetch files', { templateDetailsResponse });
-        throw new Error('Failed to fetch files');
-    }
-            
-    const templateDetails = templateDetailsResponse.templateDetails;
-    return { templateDetails, selection: analyzeQueryResponse };
+
+    return result;
 }

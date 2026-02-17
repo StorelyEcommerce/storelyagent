@@ -24,4 +24,13 @@ describe('extractStyleSignalsFromPrompt', () => {
 
 		expect(signals).toEqual([]);
 	});
+
+	test('extracts expanded style cues for stronger prompt responsiveness', () => {
+		const prompt = 'Build an edgy brutalist streetwear store with punchy high-energy visuals and raw industrial blocks.';
+		const signals = extractStyleSignalsFromPrompt(prompt);
+
+		expect(signals).toContain('brutalist');
+		expect(signals).toContain('streetwear/urban');
+		expect(signals).toContain('high-energy');
+	});
 });

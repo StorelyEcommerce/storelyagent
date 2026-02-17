@@ -54,7 +54,7 @@ export class MCPManager {
 				logger.info(`[MCPManager] Connecting to SSE MCP server: ${serverConfig.name}`, {
 					url: serverConfig.sseUrl,
 				});
-				await this.connectToSSEServer(serverConfig);
+				await this.connectToSSEServer(serverConfig as MCPSSEServerConfig);
 			} catch (error) {
 				logger.error(
 					`[MCPManager] Failed to connect to MCP server ${serverConfig.name}:`,

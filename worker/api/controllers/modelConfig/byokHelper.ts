@@ -40,9 +40,9 @@ export function getByokModels(
 }
 
 export function getPlatformEnabledProviders(env: Env): string[] {
-    const platformModelProviders = env.PLATFORM_MODEL_PROVIDERS;
+    const platformModelProviders = (env as unknown as Record<string, string | undefined>).PLATFORM_MODEL_PROVIDERS;
     if (platformModelProviders) {
-        const providers = platformModelProviders.split(',').map(p => p.trim());
+        const providers = platformModelProviders.split(',').map((p: string) => p.trim());
         return providers;
     }
 	const enabledProviders: string[] = [];
@@ -51,6 +51,7 @@ export function getPlatformEnabledProviders(env: Env): string[] {
 		'anthropic',
 		'openai',
 		'google-ai-studio',
+		'openrouter',
 		'cerebras',
 		'groq',
 	];

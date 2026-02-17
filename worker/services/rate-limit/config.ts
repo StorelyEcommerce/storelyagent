@@ -70,7 +70,7 @@ export const DEFAULT_RATE_LIMIT_SETTINGS: RateLimitSettings = {
 		bindingName: 'AUTH_RATE_LIMITER',
 	},
 	appCreation: {
-		enabled: true,
+		enabled: false,
 		store: RateLimitStore.DURABLE_OBJECT,
 		limit: 10,
         dailyLimit: 10,

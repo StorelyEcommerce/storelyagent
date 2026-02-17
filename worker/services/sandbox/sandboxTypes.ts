@@ -53,6 +53,7 @@ export const InstanceCreationRequestSchema = z.object({
     files: z.array(TemplateFileSchema),
     projectName: z.string(),
     webhookUrl: z.string().url().optional(),
+    previewDomain: z.string().optional(),
     envVars: z.record(z.string(), z.string()).optional(),
     initCommand: z.string().default('bun run dev'),
 })

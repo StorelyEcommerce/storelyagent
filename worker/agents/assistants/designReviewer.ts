@@ -18,6 +18,7 @@ import { InferError } from '../inferutils/core';
 import { createDeployPreviewTool } from '../tools/toolkit/deploy-preview';
 import { createWaitTool } from '../tools/toolkit/wait';
 import { mcpManager } from '../tools/mcpManager';
+import { z } from 'zod';
 
 const SYSTEM_PROMPT = `You are a design and UX review specialist with expertise in modern web applications, user experience, visual design, and functional testing.
 
@@ -206,23 +207,52 @@ export class DesignReviewAssistant extends Assistant<Env> {
         const mcpToolDefinitions = await mcpManager.getToolDefinitions();
         logger.info(`[DesignReview] Got ${mcpToolDefinitions.length} MCP tool definitions`);
         
-        const mcpTools: ToolDefinition<any, any>[] = mcpToolDefinitions.map(toolDef => ({
-            ...toolDef,
-            implementation: async (args: Record<string, unknown>) => {
-                logger.info(`[DesignReview] Executing MCP tool: ${toolDef.function.name}`, { args });
-                try {
-                    const result = await mcpManager.executeTool(toolDef.function.name, args);
-                    logger.info(`[DesignReview] MCP tool ${toolDef.function.name} completed successfully`);
-                    return result;
-                } catch (error) {
-                    logger.error(`[DesignReview] MCP tool ${toolDef.function.name} failed`, {
-                        error: error instanceof Error ? error.message : String(error),
-                        stack: error instanceof Error ? error.stack : undefined,
-                    });
-                    throw error;
-                }
-            },
-        }));
+        const mcpTools: ToolDefinition<Record<string, unknown>, string>[] = mcpToolDefinitions.map(toolDef => {
+            const toolFunction = toolDef.function;
+            const toolName = toolFunction?.name ?? 'mcp_tool';
+            const toolDescription = toolFunction?.description ?? '';
+            const toolParameters = toolFunction?.parameters ?? {
+                type: 'object',
+                properties: {},
+                required: [],
+                additionalProperties: false,
+            };
+
+            return {
+                name: toolName,
+                description: toolDescription,
+                schema: z.object({}).passthrough(),
+                resources: () => ({}),
+                type: 'function',
+                function: {
+                    name: toolName,
+                    description: toolDescription,
+                    parameters: toolParameters,
+                },
+                openAISchema: {
+                    type: 'function',
+                    function: {
+                        name: toolName,
+                        description: toolDescription,
+                        parameters: toolParameters,
+                    },
+                },
+                implementation: async (args: Record<string, unknown>) => {
+                    logger.info(`[DesignReview] Executing MCP tool: ${toolName}`, { args });
+                    try {
+                        const result = await mcpManager.executeTool(toolName, args);
+                        logger.info(`[DesignReview] MCP tool ${toolName} completed successfully`);
+                        return result;
+                    } catch (error) {
+                        logger.error(`[DesignReview] MCP tool ${toolName} failed`, {
+                            error: error instanceof Error ? error.message : String(error),
+                            stack: error instanceof Error ? error.stack : undefined,
+                        });
+                        throw error;
+                    }
+                },
+            };
+        });
         
         logger.info(`[DesignReview] Created ${mcpTools.length} MCP tools with implementations`);
 
@@ -238,12 +268,12 @@ export class DesignReviewAssistant extends Assistant<Env> {
             ? rawTools.map(td => ({
                 ...td,
                 onStart: (args: Record<string, unknown>) => toolRenderer({ 
-                    name: td.function.name, 
+                    name: td.name, 
                     status: 'start', 
                     args 
                 }),
                 onComplete: (args: Record<string, unknown>, result: unknown) => toolRenderer({ 
-                    name: td.function.name, 
+                    name: td.name, 
                     status: 'success', 
                     args,
                     result: typeof result === 'string' ? result : JSON.stringify(result)
@@ -287,4 +317,3 @@ export class DesignReviewAssistant extends Assistant<Env> {
         }));
     }
 }
-

@@ -6,7 +6,7 @@ import { AuthService } from '../../../database/services/AuthService';
 import { SessionService } from '../../../database/services/SessionService';
 import { UserService } from '../../../database/services/UserService';
 import { ApiKeyService } from '../../../database/services/ApiKeyService';
-import { generateApiKey } from '../../../utils/cryptoUtils';
+import { generateApiKey, sha256Hash } from '../../../utils/cryptoUtils';
 import {
     loginSchema,
     registerSchema,
@@ -507,8 +507,6 @@ export class AuthController extends BaseController {
 
             const sanitizedName = name.trim().substring(0, 100);
 
-            const { key, keyHash, keyPreview } = await generateApiKey();
-
             const apiKeyService = new ApiKeyService(env);
             const activeKeyCount = await apiKeyService.getActiveApiKeyCount(user.id);
             if (activeKeyCount >= AuthController.MAX_API_KEYS_PER_USER) {
@@ -829,4 +827,3 @@ export class AuthController extends BaseController {
         }
     }
 }
-

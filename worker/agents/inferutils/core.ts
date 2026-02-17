@@ -23,6 +23,8 @@ import { RateLimitType } from 'worker/services/rate-limit/config';
 import { getMaxToolCallingDepth, MAX_LLM_MESSAGES } from '../constants';
 import Anthropic from '@anthropic-ai/sdk';
 import { zodToJsonSchema } from './zodToJsonSchema';
+import { CompletionDetector } from './completionDetection';
+import { executeToolWithDefinition } from '../tools/customTools';
 
 function optimizeInputs(messages: Message[]): Message[] {
     return messages.map((message) => ({
@@ -217,14 +219,27 @@ function convertMessagesToResponsesInput(messages: Message[]): Array<{
         });
 }
 
-export async function buildGatewayUrl(env: Env, providerOverride?: AIGatewayProviders): Promise<string> {
+function buildGatewayPathname(basePathname: string, providerOverride?: AIGatewayProviders): string {
+    const normalized = `/${basePathname}`.replace(/\/+/g, '/').replace(/\/$/, '');
+    if (!providerOverride) {
+        return `${normalized}/compat`;
+    }
+    return `${normalized}/${providerOverride}/compat`;
+}
+
+export async function buildGatewayUrl(
+	env: Env,
+	providerOverride?: AIGatewayProviders,
+	gatewayOverride?: { baseUrl?: string }
+): Promise<string> {
+    const configuredGatewayUrl = gatewayOverride?.baseUrl || env.CLOUDFLARE_AI_GATEWAY_URL;
     // If CLOUDFLARE_AI_GATEWAY_URL is set and is a valid URL, use it directly
-    if (env.CLOUDFLARE_AI_GATEWAY_URL &&
-        env.CLOUDFLARE_AI_GATEWAY_URL !== 'none' &&
-        env.CLOUDFLARE_AI_GATEWAY_URL.trim() !== '') {
+    if (configuredGatewayUrl &&
+        configuredGatewayUrl !== 'none' &&
+        configuredGatewayUrl.trim() !== '') {
 
         try {
-            const url = new URL(env.CLOUDFLARE_AI_GATEWAY_URL);
+            const url = new URL(configuredGatewayUrl);
             // Validate it's actually an HTTP/HTTPS URL
             if (url.protocol === 'http:' || url.protocol === 'https:') {
                 // Add 'providerOverride' as a segment to the URL
@@ -234,7 +249,7 @@ export async function buildGatewayUrl(env: Env, providerOverride?: AIGatewayProv
             }
         } catch (error) {
             // Invalid URL, fall through to use bindings
-            console.warn(`Invalid CLOUDFLARE_AI_GATEWAY_URL provided: ${env.CLOUDFLARE_AI_GATEWAY_URL}. Falling back to AI bindings.`);
+            console.warn(`Invalid CLOUDFLARE_AI_GATEWAY_URL provided: ${configuredGatewayUrl}. Falling back to AI bindings.`);
         }
     }
 
@@ -267,10 +282,16 @@ async function getApiKey(
     if (runtimeKey && isValidApiKey(runtimeKey)) {
         return runtimeKey;
     }
+
     // Fallback to environment variables
     const providerKeyString = provider.toUpperCase().replaceAll('-', '_');
     const envKey = `${providerKeyString}_API_KEY` as keyof Env;
-    let apiKey: string = env[envKey] as string;
+    const byokEnvKey = `${providerKeyString}_API_KEY_BYOK` as keyof Env;
+    const envProviderKey = env[envKey] as string;
+    const envProviderByokKey = env[byokEnvKey] as string;
+    let apiKey = isValidApiKey(envProviderKey)
+        ? envProviderKey
+        : (isValidApiKey(envProviderByokKey) ? envProviderByokKey : '');
 
     // Check if apiKey is empty or undefined and is valid
     if (!isValidApiKey(apiKey)) {
@@ -296,13 +317,18 @@ export async function getConfigurationForModel(
     apiKey: string,
     defaultHeaders?: Record<string, string>,
 }> {
+    const modelConfig: AIModelConfig = AI_MODEL_CONFIG[model as AIModels] ?? {
+        provider: 'openai',
+        model: String(model),
+        directOverride: false,
+    };
     let providerForcedOverride: AIGatewayProviders | undefined;
     if (modelConfig.directOverride) {
         switch(modelConfig.provider) {
             case 'openrouter':
                 return {
                     baseURL: 'https://openrouter.ai/api/v1',
-                    apiKey: env.OPENROUTER_API_KEY,
+                    apiKey: await getApiKey('openrouter', env, userId, runtimeOverrides),
                 };
             case 'google-ai-studio':
                 return {
@@ -322,7 +348,6 @@ export async function getConfigurationForModel(
 
     const gatewayOverride = runtimeOverrides?.aiGatewayOverride;
     const isUsingCustomGateway = !!gatewayOverride?.baseUrl;
-    const baseURL = await buildGatewayUrl(env, providerForcedOverride, gatewayOverride);
 
     const gatewayToken = isUsingCustomGateway
         ? gatewayOverride?.token
@@ -330,6 +355,21 @@ export async function getConfigurationForModel(
 
     // Try to find API key of type <PROVIDER>_API_KEY else default to gateway token
     const apiKey = await getApiKey(modelConfig.provider, env, userId, runtimeOverrides);
+
+    // Local/dev fallback: if platform gateway token is not configured, call OpenAI directly.
+    if (
+        modelConfig.provider === 'openai' &&
+        !isUsingCustomGateway &&
+        !isValidApiKey(gatewayToken ?? '') &&
+        isValidApiKey(apiKey)
+    ) {
+        return {
+            baseURL: 'https://api.openai.com/v1',
+            apiKey,
+        };
+    }
+
+    const baseURL = await buildGatewayUrl(env, providerForcedOverride, gatewayOverride);
 
     // AI Gateway wholesaling: when using BYOK provider key + platform gateway token
     const defaultHeaders = gatewayToken && apiKey !== gatewayToken ? {
@@ -388,6 +428,29 @@ export interface CompletionConfig {
     detector?: CompletionDetector;
     operationalMode?: 'initial' | 'followup';
     allowWarningInjection?: boolean;
+}
+
+function updateToolCallContext(
+    toolCallContext: ToolCallContext | undefined,
+    assistantMessage: Message,
+    executedToolCalls: ToolCallResult[],
+    detector?: CompletionDetector
+): ToolCallContext {
+    const toolMessages: Message[] = executedToolCalls.map((result) => ({
+        role: 'tool',
+        name: result.name,
+        tool_call_id: result.id,
+        content: typeof result.result === 'string' ? result.result : JSON.stringify(result.result ?? ''),
+    }));
+
+    const completionSignal = detector?.detectCompletion(executedToolCalls) ?? toolCallContext?.completionSignal;
+
+    return {
+        messages: [...(toolCallContext?.messages ?? []), assistantMessage, ...toolMessages],
+        depth: toolCallContext?.depth ?? 0,
+        completionSignal,
+        warningInjected: toolCallContext?.warningInjected,
+    };
 }
 
 export function serializeCallChain(context: ToolCallContext, finalResponse: string): string {
@@ -461,7 +524,9 @@ export type InferResponseString = {
  * Execute all tool calls from OpenAI response
  */
 async function executeToolCalls(openAiToolCalls: ChatCompletionMessageFunctionToolCall[], originalDefinitions: ToolDefinition[]): Promise<ToolCallResult[]> {
-    const toolDefinitions = new Map(originalDefinitions.map(td => [td.function.name, td]));
+    const toolDefinitions = new Map(
+        originalDefinitions.map(td => [td.function?.name ?? td.name, td])
+    );
     return Promise.all(
         openAiToolCalls.map(async (tc) => {
             try {
@@ -470,7 +535,7 @@ async function executeToolCalls(openAiToolCalls: ChatCompletionMessageFunctionTo
                 if (!td) {
                     throw new Error(`Tool ${tc.function.name} not found`);
                 }
-                const result = await executeToolWithDefinition(td, args);
+                const result = await executeToolWithDefinition(tc, td, args);
                 console.log(`Tool execution result for ${tc.function.name}:`, result);
                 return {
                     id: tc.id,
@@ -515,16 +580,19 @@ function extractClaudeModelName(modelName: string): string {
  * Adds strict: true for guaranteed schema compliance
  */
 function convertToolsToAnthropicFormat(tools: ToolDefinition<any, any>[]): Anthropic.Beta.BetaTool[] {
-    return tools.map((tool): Anthropic.Beta.BetaTool => ({
-        name: tool.function.name,
-        description: tool.function.description,
-        input_schema: {
-            type: 'object',
-            properties: (tool.function.parameters as any)?.properties || {},
-            required: (tool.function.parameters as any)?.required || [],
-        },
-        strict: true, // Enable guaranteed schema compliance for tool inputs
-    }));
+    return tools.map((tool): Anthropic.Beta.BetaTool => {
+        const toolFn = tool.function ?? tool.openAISchema.function;
+        return {
+            name: toolFn.name,
+            description: toolFn.description,
+            input_schema: {
+                type: 'object',
+                properties: (toolFn.parameters as any)?.properties || {},
+                required: (toolFn.parameters as any)?.required || [],
+            },
+            strict: true, // Enable guaranteed schema compliance for tool inputs
+        };
+    });
 }
 
 /**
@@ -540,7 +608,9 @@ async function executeAnthropicToolCalls(
     result: unknown;
     isError: boolean;
 }[]> {
-    const toolDefinitions = new Map(originalDefinitions.map(td => [td.function.name, td]));
+    const toolDefinitions = new Map(
+        originalDefinitions.map(td => [td.function?.name ?? td.name, td])
+    );
 
     return Promise.all(
         toolUseBlocks.map(async (toolUse) => {
@@ -553,17 +623,15 @@ async function executeAnthropicToolCalls(
                 // Anthropic already parses the input, no need to JSON.parse
                 const args = toolUse.input as Record<string, unknown>;
 
-                // Call onStart callback if defined
-                if (td.onStart) {
-                    td.onStart(args);
-                }
-
-                const result = await td.implementation(args);
-
-                // Call onComplete callback if defined
-                if (td.onComplete) {
-                    td.onComplete(args, result);
-                }
+                const toolCall: ChatCompletionMessageFunctionToolCall = {
+                    id: toolUse.id,
+                    type: 'function',
+                    function: {
+                        name: toolUse.name,
+                        arguments: JSON.stringify(args ?? {}),
+                    },
+                };
+                const result = await executeToolWithDefinition(toolCall, td, args);
 
                 console.log(`[AnthropicToolCall] Executed ${toolUse.name}:`, result);
 
@@ -765,12 +833,12 @@ async function inferWithAnthropicNative<OutputSchema extends z.AnyZodObject>({
     console.log(`[ClaudeNative] Using native Anthropic API`);
     console.log(`[ClaudeNative] Model: ${claudeModelName}, Schema: ${schemaName || 'none'}, Tools: ${hasTools ? anthropicTools.length : 0}`);
 
-    // Track conversation for tool calling loop
-    // Use BetaMessageParam type for compatibility with beta API features
-    let currentMessages: Anthropic.Beta.BetaMessageParam[] = anthropicMessages.map(msg => ({
-        role: msg.role,
-        content: msg.content as Anthropic.Beta.BetaContentBlockParam[] | string,
-    }));
+	// Track conversation for tool calling loop
+	// Use BetaMessageParam type for compatibility with beta API features
+	const currentMessages: Anthropic.Beta.BetaMessageParam[] = anthropicMessages.map(msg => ({
+		role: msg.role,
+		content: msg.content as Anthropic.Beta.BetaContentBlockParam[] | string,
+	}));
     const currentDepth = toolCallContext?.depth ?? 0;
     const maxDepth = getMaxToolCallingDepth(actionKey);
 
@@ -1067,7 +1135,6 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
         const userConfig = await getUserConfigurableSettings(env, metadata.userId)
         // Maybe in the future can expand using config object for other stuff like global model configs?
         await RateLimitService.enforceLLMCallsRateLimit(env, userConfig.security.rateLimit, metadata.userId, modelName)
-        const modelConfig = AI_MODEL_CONFIG[modelName as AIModels];
 
         // Route Claude models to native Anthropic API for:
         // - Structured output with guaranteed schema compliance via constrained decoding
@@ -1109,13 +1176,24 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
             }
         }
 
-        const { apiKey, baseURL, defaultHeaders } = await getConfigurationForModel(modelName, env, metadata.userId);
+        const { apiKey, baseURL, defaultHeaders } = await getConfigurationForModel(
+            modelName,
+            env,
+            metadata.userId,
+            runtimeOverrides
+        );
         const provider = modelName.split('/')[0].replace(/\[.*?\]/, '');
-        const hasApiKey = apiKey && apiKey.length > 0;
-        console.log(`[ModelCall] Provider: ${provider}, Model: ${modelName}, BaseURL: ${baseURL}, HasApiKey: ${hasApiKey}, ApiKeyPrefix: ${hasApiKey ? apiKey.substring(0, 10) + '...' : 'MISSING'}`);
+        const hasApiKey = Boolean(apiKey && apiKey.length > 0);
+        console.log(`[ModelCall] Provider: ${provider}, Model: ${modelName}, BaseURL: ${baseURL}, HasApiKey: ${hasApiKey}`);
 
         // Remove [*.] from model name
         modelName = modelName.replace(/\[.*?\]/, '');
+        if (baseURL.includes('api.openai.com') && modelName.startsWith('openai/')) {
+            modelName = modelName.slice('openai/'.length);
+        }
+        if (baseURL.includes('openrouter.ai') && modelName.startsWith('openrouter/')) {
+            modelName = modelName.slice('openrouter/'.length);
+        }
 
         const client = new OpenAI({ apiKey, baseURL: baseURL, defaultHeaders });
         const schemaObj =
@@ -1231,36 +1309,59 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
 
         console.log(`Running inference with ${modelName} using structured output with ${format} format, reasoning effort: ${reasoning_effort}, max tokens: ${maxTokens}, temperature: ${finalTemperature}, baseURL: ${baseURL}`);
 
-        const toolsOpts = tools ? { tools, tool_choice: 'auto' as const } : {};
+        const openAITools = tools?.map(toOpenAITool);
+        const toolsOpts = openAITools ? { tools: openAITools, tool_choice: 'auto' as const } : {};
         // Responses API returns different types than chat completions
         type ResponsesAPIResponse = Awaited<ReturnType<typeof client.responses.create>>;
         type ResponsesAPIStream = Stream<any>;
         let response: OpenAI.ChatCompletion | OpenAI.ChatCompletionChunk | Stream<OpenAI.ChatCompletionChunk> | ResponsesAPIResponse | ResponsesAPIStream;
+        const isCompatGateway = baseURL.includes('/compat');
+        // Cloudflare AI Gateway compat endpoint is optimized for chat-completions;
+        // use responses API for codex only when not on compat.
+        const shouldUseResponsesAPI = modelName.includes('codex') && !isCompatGateway;
         let isResponsesAPI = false;
-        if (!modelName.includes('codex')) {
+        if (!shouldUseResponsesAPI) {
             try {
                 // Call OpenAI API with proper structured output format
-                response = await client.chat.completions.create({
+                const requestBase = {
                     ...schemaObj,
                     ...extraBody,
                     ...toolsOpts,
                     model: modelName,
                     messages: messagesToPass as OpenAI.ChatCompletionMessageParam[],
                     max_completion_tokens: maxTokens || 150000,
-                    stream: stream ? true : false,
                     reasoning_effort,
                     temperature: finalTemperature,
-                }, {
-                    signal: abortSignal,
-                    headers: {
-                        "cf-aig-metadata": JSON.stringify({
-                            chatId: metadata.agentId,
-                            userId: metadata.userId,
-                            schemaName,
-                            actionKey,
-                        })
-                    }
-                });
+                };
+                response = stream
+                    ? await client.chat.completions.create({
+                        ...requestBase,
+                        stream: true,
+                    }, {
+                        signal: abortSignal,
+                        headers: {
+                            "cf-aig-metadata": JSON.stringify({
+                                chatId: metadata.agentId,
+                                userId: metadata.userId,
+                                schemaName,
+                                actionKey,
+                            })
+                        }
+                    })
+                    : await client.chat.completions.create({
+                        ...requestBase,
+                        stream: false,
+                    }, {
+                        signal: abortSignal,
+                        headers: {
+                            "cf-aig-metadata": JSON.stringify({
+                                chatId: metadata.agentId,
+                                userId: metadata.userId,
+                                schemaName,
+                                actionKey,
+                            })
+                        }
+                    });
                 console.log(`Inference response received`);
             } catch (error) {
                 // Check if error is due to abort
@@ -1304,8 +1405,8 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
                 };
 
                 // Add tools if provided
-                if (tools) {
-                    responsesParams.tools = tools;
+                if (openAITools) {
+                    responsesParams.tools = openAITools;
                     responsesParams.tool_choice = 'auto';
                 }
 
@@ -1667,9 +1768,15 @@ export async function infer<OutputSchema extends z.AnyZodObject>({
         if (executedToolCalls.length) {
             console.log(`Tool calls executed:`, JSON.stringify(executedToolCalls, null, 2));
 
+            const baseToolCallContext = updateToolCallContext(
+                toolCallContext,
+                assistantMessage,
+                executedToolCalls,
+                completionConfig?.detector
+            );
             const newDepth = (toolCallContext?.depth ?? 0) + 1;
             const newToolCallContext = {
-                messages: newMessages,
+                ...baseToolCallContext,
                 depth: newDepth
             };
 

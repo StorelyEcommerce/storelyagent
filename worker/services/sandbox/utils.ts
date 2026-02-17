@@ -21,7 +21,6 @@ export function getTemplateImportantFiles(templateDetails: TemplateDetails, filt
     const { importantFiles, allFiles, redactedFiles } = templateDetails;
 
     const redactedSet = new Set(redactedFiles);
-    const importantSet = new Set(importantFiles);
 
     const result: TemplateFile[] = [];
 

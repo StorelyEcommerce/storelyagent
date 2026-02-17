@@ -153,7 +153,8 @@ export async function uploadImage(env: Env, image: ImageAttachment, type: ImageT
 
     // Obtain CF Images URL first (when enabled) so we can pass it into R2 metadata
     let cfImagesUrl = '';
-    if (env.USE_CLOUDFLARE_IMAGES) {
+    const useCloudflareImages = Boolean((env as unknown as Record<string, unknown>).USE_CLOUDFLARE_IMAGES);
+    if (useCloudflareImages) {
         try {
             cfImagesUrl = await uploadImageToCloudflareImages(env, image, type, bytes);
         } catch (err) {

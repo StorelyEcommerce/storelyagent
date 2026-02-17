@@ -3,6 +3,7 @@ import {
     PhaseConceptType,
     FileOutputType,
     PhaseImplementationSchemaType,
+    PhasicBlueprint,
 } from '../../schemas';
 import { StaticAnalysisResponse } from '../../../services/sandbox/sandboxTypes';
 import { CurrentDevState, MAX_PHASES, PhasicState } from '../state';
@@ -69,6 +70,9 @@ export class PhasicCodingBehavior extends BaseCodingBehavior<PhasicState> implem
             throw new Error('Phasic initialization requires templateInfo.templateDetails');
         }
         const { query, language, frameworks, hostname, inferenceContext, sandboxSessionId } = initArgs;
+        if (!inferenceContext.metadata) {
+            throw new Error('Missing inference metadata for phasic initialization');
+        }
         
         // Generate a blueprint
         this.logger.info('Generating blueprint', { query, queryLength: query.length, imagesCount: initArgs.images?.length || 0 });
@@ -271,7 +275,11 @@ export class PhasicCodingBehavior extends BaseCodingBehavior<PhasicState> implem
                 phase: generatedPhases[generatedPhases.length - 1]
             });
         } else {
-            phaseConcept = this.state.blueprint.initialPhase;
+            const initialPhase = (this.state.blueprint as PhasicBlueprint).initialPhase;
+            if (!initialPhase) {
+                throw new Error('Phasic blueprint is missing initialPhase');
+            }
+            phaseConcept = initialPhase;
             this.logger.info('Starting code generation from initial phase', {
                 phase: phaseConcept
             });
@@ -467,8 +475,19 @@ export class PhasicCodingBehavior extends BaseCodingBehavior<PhasicState> implem
     async executeFinalizing(): Promise<CurrentDevState> {
         this.logger.info("Executing FINALIZING state - final review and cleanup");
 
-        if (this.setMVPGenerated()) {
+        if (!this.setMVPGenerated()) {
             this.logger.info("Finalizing stage already done");
+            return CurrentDevState.REVIEWING;
+        }
+
+        const issues = await this.fetchAllIssues(false);
+        const hasRuntimeIssues = issues.runtimeErrors.length > 0;
+        const hasLintIssues = issues.staticAnalysis?.lint?.issues?.length > 0;
+        const hasTypecheckIssues = issues.staticAnalysis?.typecheck?.issues?.length > 0;
+        const hasPendingUserInputs = this.state.pendingUserInputs.length > 0;
+
+        if (!hasPendingUserInputs && !hasRuntimeIssues && !hasLintIssues && !hasTypecheckIssues) {
+            this.logger.info("Skipping final phase generation: no pending user inputs or issues");
             return CurrentDevState.REVIEWING;
         }
 
@@ -526,14 +545,23 @@ export class PhasicCodingBehavior extends BaseCodingBehavior<PhasicState> implem
             this.executeCommands(result.installCommands);
         }
 
+        // Drop invalid file entries early to avoid synthetic/no-op phases.
+        const sanitizedFiles = result.files.filter((file) => file.path.trim().length > 0);
+        if (sanitizedFiles.length !== result.files.length) {
+            this.logger.warn("Phase generation produced files with empty paths; dropping invalid entries", {
+                phaseName: result.name,
+                dropped: result.files.length - sanitizedFiles.length,
+            });
+        }
+
         // Execute delete commands if any
-        const filesToDelete = result.files.filter(f => f.changes?.toLowerCase().trim() === 'delete');
+        const filesToDelete = sanitizedFiles.filter(f => f.changes?.toLowerCase().trim() === 'delete');
         if (filesToDelete.length > 0) {
             this.logger.info(`Deleting ${filesToDelete.length} files: ${filesToDelete.map(f => f.path).join(", ")}`);
             this.deleteFiles(filesToDelete.map(f => f.path));
         }
         
-        if (result.files.length === 0) {
+        if (sanitizedFiles.length === 0) {
             this.logger.info("No files generated for next phase");
             // Notify phase generation complete
             this.broadcast(WebSocketMessageResponses.PHASE_GENERATED, {
@@ -542,15 +570,20 @@ export class PhasicCodingBehavior extends BaseCodingBehavior<PhasicState> implem
             });
             return undefined;
         }
-        
-        this.createNewIncompletePhase(result);
+
+        const sanitizedResult: PhaseConceptGenerationSchemaType = {
+            ...result,
+            files: sanitizedFiles,
+        };
+
+        this.createNewIncompletePhase(sanitizedResult);
         // Notify phase generation complete
         this.broadcast(WebSocketMessageResponses.PHASE_GENERATED, {
-            message: `Generated next phase: ${result.name}`,
-            phase: result
+            message: `Generated next phase: ${sanitizedResult.name}`,
+            phase: sanitizedResult
         });
 
-        return result;
+        return sanitizedResult;
     }
 
     /**
@@ -587,7 +620,7 @@ export class PhasicCodingBehavior extends BaseCodingBehavior<PhasicState> implem
                     });
                 },
                 userContext,
-                shouldAutoFix: this.getInferenceContext().enableRealtimeCodeFix,
+                shouldAutoFix: this.getInferenceContext().enableRealtimeCodeFix ?? false,
                 fileChunkGeneratedCallback: streamChunks ? (filePath: string, chunk: string, format: 'full_content' | 'unified_diff') => {
                     this.broadcast(WebSocketMessageResponses.FILE_CHUNK_GENERATED, {
                         message: `Generating file: ${filePath}`,
@@ -687,7 +720,8 @@ export class PhasicCodingBehavior extends BaseCodingBehavior<PhasicState> implem
     }
 
     getTotalFiles(): number {
-        return this.fileManager.getGeneratedFilePaths().length + ((this.state.currentPhase || this.state.blueprint.initialPhase)?.files?.length || 0);
+        const initialPhaseFiles = (this.state.blueprint as PhasicBlueprint).initialPhase?.files?.length || 0;
+        return this.fileManager.getGeneratedFilePaths().length + ((this.state.currentPhase?.files?.length) || initialPhaseFiles);
     }
 
     private async applyFastSmartCodeFixes() : Promise<void> {

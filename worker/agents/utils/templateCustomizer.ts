@@ -10,6 +10,8 @@ export interface CustomizedTemplateFiles {
     'wrangler.jsonc'?: string;
     '.bootstrap.js': string;
     '.gitignore': string;
+    'storefront-app/server.js'?: string;
+    'api-worker/package.json'?: string;
 }
 
 /**
@@ -51,6 +53,21 @@ export function customizeTemplateFiles(
     customized['.gitignore'] = updateGitignore(
         templateFiles['.gitignore'] || ''
     );
+
+    // 5. Ensure storefront browser API calls use a relative base in base-store templates
+    if (templateFiles['storefront-app/server.js']) {
+        customized['storefront-app/server.js'] = ensureStorefrontPublicApiUrl(
+            templateFiles['storefront-app/server.js']
+        );
+    }
+
+    // 6. Ensure api-worker always uses its own wrangler config file explicitly.
+    // Without --config wrangler.toml, wrangler can resolve ../wrangler.jsonc and crash.
+    if (templateFiles['api-worker/package.json']) {
+        customized['api-worker/package.json'] = ensureApiWorkerDevConfig(
+            templateFiles['api-worker/package.json']
+        );
+    }
     
     return customized;
 }
@@ -63,6 +80,34 @@ export function customizePackageJson(content: string, projectName: string): stri
     pkg.name = projectName;
     pkg.scripts = pkg.scripts || {};
     pkg.scripts.prepare = 'bun .bootstrap.js || true';
+
+    // Legacy base-store templates only installed storefront deps during postinstall,
+    // which leaves api-worker deps missing and breaks /v1 proxy calls at runtime.
+    const postinstall = pkg.scripts.postinstall;
+    if (
+        typeof postinstall === 'string' &&
+        postinstall.includes('storefront-app') &&
+        !postinstall.includes('api-worker')
+    ) {
+        pkg.scripts.postinstall = `${postinstall} && cd ../api-worker && npm install`;
+    }
+
+    // Legacy base-store templates invoked wrangler directly from root-level scripts.
+    // In sandbox this can fail because api-worker local binaries are not on PATH there.
+    // Route through npm scripts so local node_modules/.bin/wrangler is always resolved.
+    if (typeof pkg.scripts.dev === 'string') {
+        pkg.scripts.dev = pkg.scripts.dev.replace(
+            /cd\s+api-worker\s*&&\s*wrangler\s+dev(?:\s+--config\s+wrangler\.toml)?(?:\s+--port\s+8787)?/g,
+            'cd api-worker && npm run dev'
+        );
+    }
+    if (typeof pkg.scripts['dev:api'] === 'string') {
+        pkg.scripts['dev:api'] = pkg.scripts['dev:api'].replace(
+            /cd\s+api-worker\s*&&\s*wrangler\s+dev(?:\s+--config\s+wrangler\.toml)?(?:\s+--port\s+8787)?/g,
+            'cd api-worker && npm run dev'
+        );
+    }
+
     return JSON.stringify(pkg, null, 2);
 }
 
@@ -207,6 +252,169 @@ function updateGitignore(content: string): string {
         return content;
     }
     return content + '\n# Bootstrap marker\n.bootstrap-complete\n';
+}
+
+function ensureStorefrontPublicApiUrl(content: string): string {
+    let next = content;
+
+    next = next
+        .split("const API_BASE = process.env.API_URL || 'http://localhost:8787';")
+        .join("const API_BASE = process.env.API_URL || 'http://127.0.0.1:8787';");
+
+    if (!next.includes('app.use(express.json());')) {
+        next = next.replace(
+            "app.use('/public', express.static(path.resolve(__dirname, 'public')));",
+            ["app.use('/public', express.static(path.resolve(__dirname, 'public')));", 'app.use(express.json());'].join('\n'),
+        );
+    }
+
+    if (!next.includes('const PUBLIC_API_URL')) {
+        next = next.replace(
+            "const STORE_SLUG = process.env.STORE_SLUG || 'demo-store';",
+            [
+                "const STORE_SLUG = process.env.STORE_SLUG || 'demo-store';",
+                'const PUBLIC_API_URL = (() => {',
+                "  const configured = process.env.PUBLIC_API_URL || '/v1/stores/';",
+                "  return configured.endsWith('/') ? configured : `${configured}/`;",
+                '})();',
+            ].join('\n'),
+        );
+    }
+
+    next = next.split("api_url: API_BASE + '/v1/stores/',").join('api_url: PUBLIC_API_URL,');
+
+    const legacyHeaderForwardingBlock = [
+        '    const headers = {};',
+        '',
+        '    for (const [key, value] of Object.entries(req.headers)) {',
+        "      if (!value || key === 'host' || key === 'content-length') {",
+        '        continue;',
+        '      }',
+        "      headers[key] = Array.isArray(value) ? value.join(',') : value;",
+        '    }',
+    ].join('\n');
+
+    const safeHeaderForwardingBlock = [
+        "    // Node's fetch rejects forbidden hop-by-hop headers (for example: connection).",
+        '    // Forward only safe end-to-end headers needed by API routes.',
+        '    const headers = {};',
+        "    const allowedHeaders = ['accept', 'content-type', 'authorization', 'cookie'];",
+        '    for (const headerName of allowedHeaders) {',
+        '      const value = req.headers[headerName];',
+        "      if (typeof value === 'string' && value.length > 0) {",
+        '        headers[headerName] = value;',
+        '      }',
+        '    }',
+    ].join('\n');
+
+    next = next.split(legacyHeaderForwardingBlock).join(safeHeaderForwardingBlock);
+
+    const legacyProxyErrorResponse = "    res.status(502).json({ error: 'API proxy request failed' });";
+    const detailedProxyErrorResponse = [
+        '    res.status(502).json({',
+        "      error: 'API proxy request failed',",
+        "      details: error instanceof Error ? error.message : String(error),",
+        '      target: `${API_BASE}${req.originalUrl}`,',
+        '    });',
+    ].join('\n');
+
+    next = next.split(legacyProxyErrorResponse).join(detailedProxyErrorResponse);
+
+    if (next.includes('console.log(`🔗 API URL: ${API_BASE}`);') && !next.includes('console.log(`🌐 Public API URL: ${PUBLIC_API_URL}`);')) {
+        next = next.replace(
+            'console.log(`🔗 API URL: ${API_BASE}`);',
+            ['console.log(`🔗 API URL: ${API_BASE}`);', '  console.log(`🌐 Public API URL: ${PUBLIC_API_URL}`);'].join('\n'),
+        );
+    }
+
+    if (!next.includes("app.use('/v1', async (req, res) => {")) {
+        next = next.replace(
+            '})();',
+            [
+                '})();',
+                '',
+                '// Proxy API calls through this server so browser requests stay same-origin in preview.',
+                "app.use('/v1', async (req, res) => {",
+                '  try {',
+                '    const targetUrl = `${API_BASE}${req.originalUrl}`;',
+                "    // Node's fetch rejects forbidden hop-by-hop headers (for example: connection).",
+                '    // Forward only safe end-to-end headers needed by API routes.',
+                '    const headers = {};',
+                "    const allowedHeaders = ['accept', 'content-type', 'authorization', 'cookie'];",
+                '    for (const headerName of allowedHeaders) {',
+                '      const value = req.headers[headerName];',
+                "      if (typeof value === 'string' && value.length > 0) {",
+                '        headers[headerName] = value;',
+                '      }',
+                '    }',
+                '',
+                '    const response = await fetch(targetUrl, {',
+                '      method: req.method,',
+                '      headers,',
+                "      body: req.method === 'GET' || req.method === 'HEAD' ? undefined : JSON.stringify(req.body ?? {}),",
+                '    });',
+                '',
+                '    const body = Buffer.from(await response.arrayBuffer());',
+                "    const contentType = response.headers.get('content-type');",
+                '',
+                '    if (contentType) {',
+                "      res.setHeader('content-type', contentType);",
+                '    }',
+                '',
+                '    res.status(response.status).send(body);',
+                '  } catch (error) {',
+                "    console.error('Failed to proxy API request:', error);",
+                '    res.status(502).json({',
+                "      error: 'API proxy request failed',",
+                "      details: error instanceof Error ? error.message : String(error),",
+                '      target: `${API_BASE}${req.originalUrl}`,',
+                '    });',
+                '  }',
+                '});',
+            ].join('\n'),
+        );
+    }
+
+    return next;
+}
+
+function ensureApiWorkerDevConfig(content: string): string {
+    let pkg: Record<string, unknown>;
+    try {
+        pkg = JSON.parse(content);
+    } catch {
+        return content;
+    }
+
+    const scripts = (pkg.scripts && typeof pkg.scripts === 'object')
+        ? pkg.scripts as Record<string, unknown>
+        : undefined;
+    if (!scripts) {
+        return content;
+    }
+
+    const devScript = scripts.dev;
+    if (typeof devScript !== 'string' || !devScript.includes('wrangler dev')) {
+        return content;
+    }
+
+    let nextDev = devScript;
+
+    if (!/--config\s+wrangler\.toml\b/.test(nextDev)) {
+        nextDev = nextDev.replace(/wrangler\s+dev\b/, 'wrangler dev --config wrangler.toml');
+    }
+
+    if (!/--port\s+8787\b/.test(nextDev)) {
+        nextDev = `${nextDev} --port 8787`;
+    }
+
+    if (nextDev === devScript) {
+        return content;
+    }
+
+    scripts.dev = nextDev;
+    pkg.scripts = scripts;
+    return JSON.stringify(pkg, null, 2);
 }
 
 /**

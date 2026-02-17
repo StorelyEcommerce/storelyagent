@@ -13,6 +13,10 @@ function isValidAppId(id: string): boolean {
     return /^[A-Za-z0-9_-]{1,128}$/.test(id);
 }
 
+function isValidSessionId(id: string): boolean {
+    return /^[A-Za-z0-9_-]{1,128}$/.test(id);
+}
+
 function validateFileName(file: string): string | null {
     // Reject any traversal or path separators
     if (file.includes('..') || file.includes('/') || file.includes('\\') || file.includes('\0')) {

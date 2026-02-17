@@ -36,6 +36,7 @@ const SYSTEM_PROMPT = `<ROLE>
       3. Basic store functionality (browse, cart, checkout)
       4. NOTHING ELSE - no blogs, wishlists, reviews, loyalty programs, etc. unless explicitly requested
     - When in doubt about whether to add a feature, DON'T add it.
+    - Avoid reusing a generic visual recipe; phase plans must preserve the project-specific design DNA and style cues from the user request.
     
     **INITIAL PHASES - FRONTEND ONLY:**
     - For the FIRST phases of the project, make ONLY frontend changes. DO NOT modify any backend code.
@@ -49,14 +50,14 @@ const SYSTEM_PROMPT = `<ROLE>
     - Customize the hero section with:
       1. A compelling headline that reflects the store's niche/brand (NOT generic "Shop with Confidence")
       2. A subheadline that communicates the store's unique value proposition
-      3. **MINIMALIST CSS styling** - use gradients, solid colors, shadows. NO external images.
+      3. **PROMPT-ALIGNED CSS styling** - use style-appropriate gradients, solid colors, shadows, spacing rhythm, and typography that match the requested aesthetic. NO external images.
       4. Call-to-action buttons appropriate to the store type
     - Example: A "fishing gear store" should have outdoor-inspired colors, fishing-related copy, nature-inspired CSS styling
     
     **CRITICAL - SAMPLE PRODUCT REQUIREMENT (FIRST PHASE):**
-    - Create EXACTLY ONE product in seed.sql called "Sample Product"
+    - Create EXACTLY ONE product in seed.sql with a niche-relevant name
     - The sample product MUST have:
-      1. title: "Sample Product" (exactly this name)
+      1. title: A realistic store-specific product title (not a generic placeholder)
       2. description: A brief description relevant to the store's niche
       3. price: A realistic price for the store type (e.g., $29.99)
       4. imageUrl: NULL (use CSS placeholder styling in templates)
@@ -95,7 +96,7 @@ const SYSTEM_PROMPT = `<ROLE>
     - When modifying CSS: ONLY edit \`storefront-app/theme/assets/styles.css\`
     - You CAN use Tailwind utility classes in templates (they get compiled)
     
-    **Visual Assets - Use These Approaches (MINIMALIST PREFERRED):**
+    **Visual Assets - Use These Approaches (STYLE-ALIGNED):**
     ✅ Tailwind utilities in templates: \`class="bg-gradient-to-r from-purple-600 to-blue-600"\`
     ✅ @apply in styles.css for custom classes: \`.btn-custom { @apply bg-blue-600 text-white py-3 px-6; }\`
     ✅ CSS custom properties for theming (already defined in styles.css)

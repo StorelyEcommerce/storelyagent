@@ -1,11 +1,10 @@
 import type {
     Blueprint, DesignDNA, PhaseConceptType,
     FileOutputType,
-    Blueprint,
 } from '../schemas';
 // import type { ScreenshotData } from './types';
 import type { ConversationMessage } from '../inferutils/common';
-import type { InferenceContext } from '../inferutils/config.types';
+import type { InferenceContext, InferenceMetadata } from '../inferutils/config.types';
 import type { ImageAttachment, ProcessedImageAttachment } from 'worker/types/image-attachment';
 
 export interface FileState extends FileOutputType {
@@ -43,6 +42,7 @@ export interface CodeGenState {
     lastPackageJson?: string; // Last package.json file contents
     templateName: string;
     sandboxInstanceId?: string;
+    fileServingToken?: FileServingToken;
 
     shouldBeGenerating: boolean; // Persistent flag indicating generation should be active
     mvpGenerated: boolean;
@@ -75,4 +75,25 @@ export interface CodeGenState {
         images?: Array<ImageAttachment | ProcessedImageAttachment>;
         storeInfoMessage?: string; // Message to broadcast via WebSocket asking for store info
     }; // Stored init args when waiting for store info before initialization
-} 
+}
+
+type AgentBehaviorType = 'phasic' | 'agentic';
+type AgentProjectType = 'app' | 'workflow' | 'presentation' | 'general';
+
+export interface BaseProjectState extends CodeGenState {
+    behaviorType: AgentBehaviorType;
+    projectType: AgentProjectType;
+    metadata: InferenceMetadata;
+    phasesCounter: number;
+    inferenceContext?: InferenceContext;
+}
+
+export interface PhasicState extends BaseProjectState {
+    behaviorType: 'phasic';
+}
+
+export interface AgenticState extends BaseProjectState {
+    behaviorType: 'agentic';
+}
+
+export type AgentState = PhasicState | AgenticState;

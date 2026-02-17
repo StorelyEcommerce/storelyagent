@@ -11,6 +11,8 @@ import {
 	type BehaviorType,
 	type FileType,
 	type TemplateDetails,
+	MAX_AGENT_QUERY_LENGTH,
+	normalizeProjectType,
 	getBehaviorTypeForProject,
 } from '@/api-types';
 import {
@@ -19,8 +21,10 @@ import {
 } from '@/utils/ndjson-parser/ndjson-parser';
 import { getFileType } from '@/utils/string';
 import { logger } from '@/utils/logger';
+import { mergeFiles } from '@/utils/file-helpers';
 import { apiClient, ApiError } from '@/lib/api-client';
 import { appEvents } from '@/lib/app-events';
+import { getPreviewUrl } from '@/lib/utils';
 import { createWebSocketMessageHandler, type HandleMessageDeps } from '../utils/handle-websocket-message';
 import { isConversationalMessage, addOrUpdateMessage, createUserMessage, handleRateLimitError, createAIMessage, type ChatMessage } from '../utils/message-helpers';
 import { sendWebSocketMessage } from '../utils/websocket-helpers';
@@ -51,6 +55,7 @@ export function useChat({
 	projectType = 'app',
 	onDebugMessage,
 	onTerminalMessage,
+	onVaultUnlockRequired,
 	onGuardrailRejection,
 }: {
 	chatId?: string;
@@ -59,11 +64,15 @@ export function useChat({
 	projectType?: ProjectType;
 	onDebugMessage?: (type: 'error' | 'warning' | 'info' | 'websocket', message: string, details?: string, source?: string, messageType?: string, rawMessage?: unknown) => void;
 	onTerminalMessage?: (log: { id: string; content: string; type: 'command' | 'stdout' | 'stderr' | 'info' | 'error' | 'warn' | 'debug'; timestamp: number; source?: string }) => void;
+	onVaultUnlockRequired?: (reason: string) => void;
 	onGuardrailRejection?: (message: string) => void;
 }) {
+	// Guard against invalid runtime values (e.g. null from URL param casting).
+	const safeProjectType: ProjectType = normalizeProjectType(projectType);
+
 	// Derive initial behavior type from project type using feature system
 	const getInitialBehaviorType = (): BehaviorType => {
-		return getBehaviorTypeForProject(projectType);
+		return getBehaviorTypeForProject(safeProjectType);
 	};
 
 	const connectionStatus = useRef<'idle' | 'connecting' | 'connected' | 'failed' | 'retrying'>('idle');
@@ -95,7 +104,7 @@ export function useChat({
 	const [previewUrl, setPreviewUrl] = useState<string>();
 	const [query, setQuery] = useState<string>();
 	const [behaviorType, setBehaviorType] = useState<BehaviorType>(getInitialBehaviorType());
-	const [internalProjectType, setInternalProjectType] = useState<ProjectType>(projectType);
+	const [internalProjectType, setInternalProjectType] = useState<ProjectType>(safeProjectType);
 	const [templateDetails, setTemplateDetails] = useState<TemplateDetails | null>(null);
 
 	const [websocket, setWebsocket] = useState<WebSocket>();
@@ -220,6 +229,8 @@ export function useChat({
 			setStaticIssueCount,
 			setIsDebugging,
 			setWaitingForStoreInfo,
+			setTemplateDetails,
+			setInternalProjectType,
 			// Current state
 			isInitialStateRestored,
 			blueprint,
@@ -382,7 +393,7 @@ export function useChat({
 				handleConnectionFailureRef.current?.(wsUrl, disableGenerate, 'Connection setup failed');
 			}
 		},
-		[maxRetries, handleWebSocketMessage, urlChatId],
+		[maxRetries, handleWebSocketMessage, urlChatId, waitingForStoreInfo],
 	);
 
 	// Handle connection failures with exponential backoff retry
@@ -429,6 +440,11 @@ export function useChat({
 		},
 		[maxRetries, onDebugMessage, sendMessage],
 	);
+
+	useEffect(() => {
+		connectWithRetryRef.current = connectWithRetry;
+		handleConnectionFailureRef.current = handleConnectionFailure;
+	}, [connectWithRetry, handleConnectionFailure]);
 
 	// No legacy wrapper; call connectWithRetry directly
 
@@ -500,6 +516,12 @@ export function useChat({
 							setIsBootstrapping(false);
 							// Reset project stages to pending - we haven't started yet
 							setProjectStages(defaultStages.map(stage => ({ ...stage, status: 'pending' as const })));
+							// Also surface the question immediately from the stream in case WebSocket delivery is delayed.
+							if (typeof obj.storeInfoMessage === 'string' && obj.storeInfoMessage.trim().length > 0) {
+								sendMessage(
+									createAIMessage('conversation_response', obj.storeInfoMessage.trim()),
+								);
+							}
 							// Don't continue - we still need to process agentId and websocketUrl from this message
 						}
 
@@ -556,18 +578,18 @@ export function useChat({
 						updateStage('blueprint', { status: 'completed' });
 						setIsGeneratingBlueprint(false);
 						sendMessage(createAIMessage('main', 'Blueprint generation complete. Now starting the code generation...', true));
-					} else if (receivedStoreInfoPending) {
-						// We're waiting for store info, don't show blueprint completion
-						// The store info request will come via WebSocket as a normal CONVERSATION_RESPONSE
-						logger.info('Waiting for store info from user, connecting to WebSocket');
-						// Still need to connect to WebSocket so user can respond
-						if (result.websocketUrl && result.agentId) {
-							logger.debug('connecting to ws for store info response');
-							connectWithRetry(result.websocketUrl);
-							setChatId(result.agentId);
+						} else if (receivedStoreInfoPending) {
+							// We're waiting for store info, don't show blueprint completion
+							// The store info request will come via WebSocket as a normal CONVERSATION_RESPONSE
+							logger.info('Waiting for store info from user, connecting to WebSocket');
+							// Still need to connect to WebSocket so user can respond
+							if (result.websocketUrl && result.agentId) {
+								logger.debug('connecting to ws for store info response');
+								connectWithRetry(result.websocketUrl, { disableGenerate: true });
+								setChatId(result.agentId);
+							}
+							return; // Don't proceed with normal flow - we're waiting for user input
 						}
-						return; // Don't proceed with normal flow - we're waiting for user input
-					}
 
 					// Connect to WebSocket
 					logger.debug('connecting to ws with created id');
@@ -599,6 +621,12 @@ export function useChat({
 					logger.debug('Existing agentId API result', response.data);
 					// Set the chatId for existing chat - this enables the chat input
 					setChatId(urlChatId);
+
+					// Seed preview URL from persisted app state so reconnects don't regress to stale DO cache values.
+					const appDetails = await apiClient.getAppDetails(urlChatId);
+					if (appDetails.success && appDetails.data?.previewUrl) {
+						setPreviewUrl(getPreviewUrl(appDetails.data.previewUrl));
+					}
 
 
 					if (!response.data.websocketUrl) {
@@ -636,6 +664,7 @@ export function useChat({
 		connectWithRetry,
 		loadBootstrapFiles,
 		onDebugMessage,
+		onGuardrailRejection,
 		sendMessage,
 		updateStage,
 		urlChatId,

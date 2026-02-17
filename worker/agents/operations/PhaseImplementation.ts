@@ -1,4 +1,4 @@
-import { PhaseConceptType, FileOutputType } from '../schemas';
+import { PhaseConceptSchema, PhaseConceptType, FileOutputType } from '../schemas';
 import { IssueReport } from '../domain/values/IssueReport';
 import { createUserMessage, createMultiModalUserMessage } from '../inferutils/common';
 import { executeInference } from '../inferutils/infer';
@@ -8,10 +8,13 @@ import { AgentOperation, getSystemPromptWithProjectContext, OperationOptions } f
 import { SCOFFormat, SCOFParsingState } from '../output-formats/streaming-formats/scof';
 import { IsRealtimeCodeFixerEnabled, RealtimeCodeFixer } from '../assistants/realtimeCodeFixer';
 import { CodeSerializerType } from '../utils/codeSerializers';
+import { issuesPromptFormatter, PROMPT_UTILS, STRATEGIES } from '../prompts';
 import type { UserContext } from '../core/types';
 import { imagesToBase64 } from 'worker/utils/images';
 import { ManusOperationConfig } from '../inferutils/config.types';
 import { executeManusCodeGeneration } from 'worker/services/manus';
+import { TemplateRegistry } from '../inferutils/schemaFormatters';
+import { PhasicGenerationContext } from '../domain/values/GenerationContext';
 
 export interface PhaseImplementationInputs {
     phase: PhaseConceptType
@@ -437,7 +440,7 @@ The README should be professional, well-structured, and provide clear instructio
 - Include setup/installation instructions using bun (not npm/yarn)
 - Add usage examples and development instructions
 - Include a deployment section with Cloudflare-specific instructions
-- **IMPORTANT**: Add a \`[cloudflarebutton]\` placeholder near the top and another in the deployment section for the Cloudflare deploy button. Write the **EXACT** string except the backticks and DON'T enclose it in any other button or anything. We will replace it with https://deploy.workers.cloudflare.com/?url=\${repositoryUrl\} when the repository is created.
+- **IMPORTANT**: Add a \`[cloudflarebutton]\` placeholder near the top and another in the deployment section for the Cloudflare deploy button. Write the **EXACT** string except the backticks and DON'T enclose it in any other button or anything. We will replace it with https://deploy.workers.cloudflare.com/?url=\${repositoryUrl} when the repository is created.
 - Structure the content clearly with appropriate headers and sections
 - Be concise but comprehensive - focus on essential information
 - Use professional tone suitable for open source projects
@@ -470,21 +473,29 @@ const specialPhasePromptOverrides: Record<string, string> = {
     "Finalization and Review": LAST_PHASE_PROMPT,
 }
 
-const userPromptFormatter = (phaseConcept: PhaseConceptType, issues: IssueReport, userSuggestions?: string[]) => {
+const buildPhaseImplementationUserPrompt = ({
+    phase,
+    issues,
+    userContext,
+}: {
+    phase: PhaseConceptType;
+    issues: IssueReport;
+    userContext?: UserContext;
+}) => {
     const phaseText = TemplateRegistry.markdown.serialize(
-        phaseConcept,
+        phase,
         PhaseConceptSchema
     );
 
-    const prompt = PROMPT_UTILS.replaceTemplateVariables(specialPhasePromptOverrides[phaseConcept.name] || USER_PROMPT, {
+    const prompt = PROMPT_UTILS.replaceTemplateVariables(specialPhasePromptOverrides[phase.name] || USER_PROMPT, {
         phaseText,
         issues: issuesPromptFormatter(issues),
-        userSuggestions: formatUserSuggestions(userSuggestions)
+        userSuggestions: formatUserSuggestions(userContext?.suggestions)
     });
     return PROMPT_UTILS.verifyPrompt(prompt);
 }
 
-export class PhaseImplementationOperation extends AgentOperation<PhaseImplementationInputs, PhaseImplementationOutputs> {
+export class PhaseImplementationOperation extends AgentOperation<PhasicGenerationContext, PhaseImplementationInputs, PhaseImplementationOutputs> {
     async execute(
         inputs: PhaseImplementationInputs,
         options: OperationOptions<PhasicGenerationContext>
@@ -619,9 +630,9 @@ export class PhaseImplementationOperation extends AgentOperation<PhaseImplementa
         const { env, logger, context } = options;
         logger.info("Generating README.md for the project");
 
-        try {
-            let readmePrompt = README_GENERATION_PROMPT;
-            const messages = [...getSystemPromptWithProjectContext(SYSTEM_PROMPT, context, CodeSerializerType.SCOF), createUserMessage(readmePrompt)];
+		try {
+			const readmePrompt = README_GENERATION_PROMPT;
+			const messages = [...getSystemPromptWithProjectContext(SYSTEM_PROMPT, context, CodeSerializerType.SCOF), createUserMessage(readmePrompt)];
 
             const results = await executeInference({
                 env: env,

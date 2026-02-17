@@ -34,6 +34,7 @@ import {
     buildDeploymentConfig,
     parseWranglerConfig,
     deployToDispatch,
+    deployWorker,
 } from '../deployer/deploy';
 import {
     createAssetManifest
@@ -42,7 +43,7 @@ import { generateId } from '../../utils/idGenerator';
 import { ResourceProvisioner } from './resourceProvisioner';
 import { TemplateParser } from './templateParser';
 import { ResourceProvisioningResult } from './types';
-import { getPreviewDomain, migratePreviewUrl } from '../../utils/urls';
+import { getPreviewDomain, migratePreviewUrl, normalizePreviewUrl } from '../../utils/urls';
 import { isDev } from 'worker/utils/envs'
 import { FileTreeBuilder } from './fileTreeBuilder';
 import { DeploymentTarget } from 'worker/agents/core/types';
@@ -54,6 +55,7 @@ interface InstanceMetadata {
     projectName: string;
     startTime: string;
     webhookUrl?: string;
+    previewDomain?: string;
     previewURL?: string;
     tunnelURL?: string;
     processId?: string;
@@ -232,24 +234,26 @@ export class SandboxSdkClient extends BaseSandboxService {
         }
     }
 
-    // /** Write a binary file to the sandbox using small base64 chunks to avoid large control messages. */
-    // private async writeBinaryFileViaBase64(targetPath: string, data: ArrayBuffer, bytesPerChunk: number = 16 * 1024): Promise<void> {
-    //     const dir = targetPath.includes('/') ? targetPath.slice(0, targetPath.lastIndexOf('/')) : '.';
-    //     // Ensure directory and clean target file
-    //     await this.safeSandboxExec(`mkdir -p '${dir}'`);
-    //     await this.safeSandboxExec(`rm -f '${targetPath}'`);
+    /** Write a binary file to the sandbox using small base64 chunks to avoid large control messages. */
+    private async writeBinaryFileViaBase64(targetPath: string, data: ArrayBuffer, bytesPerChunk: number = 16 * 1024): Promise<void> {
+        const dir = targetPath.includes('/') ? targetPath.slice(0, targetPath.lastIndexOf('/')) : '.';
+        await this.safeSandboxExec(`mkdir -p '${dir}'`);
+        await this.safeSandboxExec(`rm -f '${targetPath}'`);
 
-    //     const buffer = new Uint8Array(data);
-    //     for (let i = 0; i < buffer.length; i += bytesPerChunk) {
-    //         const chunk = buffer.subarray(i, Math.min(i + bytesPerChunk, buffer.length));
-    //         const base64Chunk = btoa(String.fromCharCode(...chunk));
-    //         // Append decoded bytes into the target file inside the sandbox
-    //         const appendResult = await this.safeSandboxExec(`printf '%s' '${base64Chunk}' | base64 -d >> '${targetPath}'`);
-    //         if (appendResult.exitCode !== 0) {
-    //             throw new Error(`Failed to append to ${targetPath}: ${appendResult.stderr}`);
-    //         }
-    //     }
-    // }
+        const buffer = new Uint8Array(data);
+        for (let i = 0; i < buffer.length; i += bytesPerChunk) {
+            const chunk = buffer.subarray(i, Math.min(i + bytesPerChunk, buffer.length));
+            let binaryString = '';
+            for (let j = 0; j < chunk.length; j++) {
+                binaryString += String.fromCharCode(chunk[j]);
+            }
+            const base64Chunk = btoa(binaryString);
+            const appendResult = await this.safeSandboxExec(`printf '%s' '${base64Chunk}' | base64 -d >> '${targetPath}'`);
+            if (appendResult.exitCode !== 0) {
+                throw new Error(`Failed to append to ${targetPath}: ${appendResult.stderr}`);
+            }
+        }
+    }
 
     /**
      * Write multiple files efficiently using a single shell script
@@ -288,7 +292,7 @@ export class SandboxSdkClient extends BaseSandboxService {
             const base64 = base64Chunks.join('');
 
             scriptLines.push(
-                `mkdir -p "$(dirname "${filePath}")" && echo '${base64}' | base64 -d > "${filePath}" && echo "OK:${filePath}" || echo "FAIL:${filePath}"`
+                `mkdir -p "$(dirname "${path}")" && echo '${base64}' | base64 -d > "${path}" && echo "OK:${path}" || echo "FAIL:${path}"`
             );
         }
 
@@ -339,8 +343,8 @@ export class SandboxSdkClient extends BaseSandboxService {
 
         } catch (error) {
             this.logger.error('Batch write failed', error);
-            return files.map(({ filePath }) => ({
-                file: filePath,
+            return files.map(({ path }) => ({
+                file: path,
                 success: false,
                 error: error instanceof Error ? error.message : 'Unknown error'
             }));
@@ -352,8 +356,8 @@ export class SandboxSdkClient extends BaseSandboxService {
             const session = await this.getInstanceSession(instanceId);
             // Use batch script for efficient writing (3 requests for any number of files)
             const filesToWrite = files.map(file => ({
-                filePath: `/workspace/${instanceId}/${file.filePath}`,
-                fileContents: file.fileContents
+                path: `/workspace/${instanceId}/${file.filePath}`,
+                content: file.fileContents
             }));
             
             const writeResults = await this.writeFilesViaScript(filesToWrite, session);
@@ -579,7 +583,7 @@ export class SandboxSdkClient extends BaseSandboxService {
                         uptime: Math.floor((Date.now() - new Date(metadata.startTime).getTime()) / 1000),
                         directory: instanceId,
                         serviceDirectory: instanceId,
-                        previewURL: migratePreviewUrl(metadata.previewURL, env),
+                        previewURL: migratePreviewUrl(metadata.previewURL, env, metadata.previewDomain),
                         processId: metadata.processId,
                         tunnelURL: metadata.tunnelURL,
                         // Skip file tree
@@ -730,6 +734,24 @@ export class SandboxSdkClient extends BaseSandboxService {
                                 `"vite --host 0.0.0.0 --port ${port}"`
                             );
 
+                            // Some templates run storefront via "cd storefront-app && npm run dev"
+                            // and rely on PORT env for the actual web server port.
+                            // Ensure both PORT and explicit host/port CLI args are passed so the
+                            // server binds on an externally reachable interface inside the sandbox.
+                            if (modifiedDevScript === originalDevScript) {
+                                modifiedDevScript = originalDevScript.replace(
+                                    /(["'])cd\s+storefront-app\s+&&\s+npm\s+run\s+dev\1/,
+                                    `"cd storefront-app && HOST=0.0.0.0 PORT=${port} npm run dev -- --host 0.0.0.0 --port ${port}"`
+                                );
+                            }
+
+                            // Ensure the API worker process does not inherit storefront PORT.
+                            // Some runners propagate PORT globally; force api-worker back to 8787.
+                            modifiedDevScript = modifiedDevScript.replace(
+                                /cd\s+api-worker\s+&&\s+wrangler\s+dev/g,
+                                'cd api-worker && PORT=8787 wrangler dev'
+                            );
+
                             if (modifiedDevScript !== originalDevScript) {
                                 packageJson.scripts.dev = modifiedDevScript;
                                 const updatedContent = JSON.stringify(packageJson, null, 2);
@@ -755,6 +777,11 @@ export class SandboxSdkClient extends BaseSandboxService {
                             modifiedDevScript = originalDevScript.includes('--port')
                                 ? originalDevScript.replace(/--port\s+\d+/, `--port ${port}`)
                                 : originalDevScript.replace(/vite\s+/, `vite --port ${port} `);
+                            if (!modifiedDevScript.includes('--host')) {
+                                modifiedDevScript = modifiedDevScript.replace(/vite\s+/, `vite --host 0.0.0.0 `);
+                            } else {
+                                modifiedDevScript = modifiedDevScript.replace(/--host\s+\S+/, '--host 0.0.0.0');
+                            }
 
                             if (modifiedDevScript !== originalDevScript) {
                                 packageJson.scripts.dev = modifiedDevScript;
@@ -781,13 +808,16 @@ export class SandboxSdkClient extends BaseSandboxService {
                 });
             }
 
-            // Start process with env vars inline for those not in .dev.vars
-            // PORT is set as env var, and package.json now uses ${PORT} which will be expanded by shell
-            const command = `VITE_LOGGER_TYPE=json PORT=${port} monitor-cli process start --instance-id ${instanceId} --port ${port} -- bun run dev`;
+            // Start process without exporting a global PORT env var.
+            // The storefront command already receives an explicit PORT during dev-script rewrite.
+            // Keeping PORT global can interfere with other subprocesses (for example wrangler dev).
+            const startCommand = `sh -lc 'HOST=0.0.0.0 bun run dev'`;
+            const command = `VITE_LOGGER_TYPE=json monitor-cli process start --instance-id ${instanceId} --port ${port} -- ${startCommand}`;
             this.logger.info('▶️ [START_DEV_SERVER] Starting process', {
                 instanceId,
                 port,
                 devScriptModified,
+                startCommand,
                 command: command.substring(0, 250) + '...'
             });
 
@@ -873,6 +903,22 @@ export class SandboxSdkClient extends BaseSandboxService {
             });
             throw error;
         }
+    }
+
+    private parseListeningPorts(raw: string): number[] {
+        const ports = raw
+            .split('\n')
+            .map((line) => Number.parseInt(line.trim(), 10))
+            .filter((port) => Number.isInteger(port) && port > 0 && port <= 65535);
+        return Array.from(new Set(ports)).sort((a, b) => a - b);
+    }
+
+    private async isPortListening(instanceId: string, port: number): Promise<boolean> {
+        const session = await this.getInstanceSession(instanceId);
+        const check = await session.exec(
+            `netstat -tuln 2>/dev/null | grep -E '[:.]${port}[^0-9]' || ss -tuln 2>/dev/null | grep -E '[:.]${port}[^0-9]'`
+        );
+        return check.exitCode === 0;
     }
 
     /**
@@ -1111,12 +1157,18 @@ export class SandboxSdkClient extends BaseSandboxService {
     }
 
 
-    private async setupInstance(instanceId: string, projectName: string, localEnvVars?: Record<string, string>): Promise<{ previewURL: string, tunnelURL: string, processId: string, allocatedPort: number } | undefined> {
+    private async setupInstance(
+        instanceId: string,
+        projectName: string,
+        localEnvVars?: Record<string, string>,
+        previewDomain?: string
+    ): Promise<{ previewURL: string, tunnelURL: string, processId: string, allocatedPort: number } | undefined> {
         const setupStartTime = Date.now();
         this.logger.info('⚙️ [SETUP_INSTANCE] Starting instance setup', {
             instanceId,
             projectName,
-            hasLocalEnvVars: !!localEnvVars && Object.keys(localEnvVars).length > 0
+            hasLocalEnvVars: !!localEnvVars && Object.keys(localEnvVars).length > 0,
+            previewDomain: previewDomain || getPreviewDomain(env)
         });
 
         try {
@@ -1149,62 +1201,46 @@ export class SandboxSdkClient extends BaseSandboxService {
             }
 
             // Store wrangler.jsonc configuration in KV after resource provisioning
-            // Also inject platform secrets for admin dashboard authentication
+            // Also inject platform secrets for admin dashboard authentication.
+            // This is a hard requirement; setup must stop on any wrangler config failure.
             this.logger.info('💾 [SETUP_INSTANCE] Step 3: Storing wrangler config in KV', { instanceId });
             try {
                 const session = await this.getInstanceSession(instanceId);
                 const wranglerConfigFile = await session.readFile(`/workspace/${instanceId}/wrangler.jsonc`);
-                if (wranglerConfigFile.success) {
-                    // Inject platform JWT secret and admin dashboard URL for seamless admin auth
-                    let configContent = wranglerConfigFile.content;
-                    try {
-                        // Parse JSONC (strip comments) and inject platform vars
-                        const configWithoutComments = configContent
-                            .replace(/\/\*[\s\S]*?\*\//g, '') // Remove block comments
-                            .replace(/\/\/.*$/gm, '');        // Remove line comments
-                        const config = JSON.parse(configWithoutComments);
-
-                        // Add platform auth vars to enable admin dashboard authentication
-                        if (!config.vars) {
-                            config.vars = {};
-                        }
-
-                        // Inject JWT_SECRET so stores can validate platform-issued JWTs
-                        if ('JWT_SECRET' in env) {
-                            config.vars.PLATFORM_JWT_SECRET = env.JWT_SECRET;
-                            this.logger.info('🔐 [SETUP_INSTANCE] Injected PLATFORM_JWT_SECRET for admin dashboard auth', { instanceId });
-                        }
-
-                        // Inject admin dashboard URL for CORS
-                        if ('CUSTOM_DOMAIN' in env) {
-                            const protocol = (env.CUSTOM_DOMAIN as string).includes('localhost') ? 'http' : 'https';
-                            config.vars.ADMIN_DASHBOARD_URL = `${protocol}://${env.CUSTOM_DOMAIN}`;
-                            this.logger.info('🌐 [SETUP_INSTANCE] Injected ADMIN_DASHBOARD_URL for CORS', {
-                                instanceId,
-                                url: config.vars.ADMIN_DASHBOARD_URL
-                            });
-                        }
-
-                        // Convert back to JSON (comments are stripped but that's fine for KV storage)
-                        configContent = JSON.stringify(config, null, 2);
-                    } catch (parseError) {
-                        this.logger.warn('⚠️ [SETUP_INSTANCE] Could not parse wrangler config for injection, using original', {
-                            instanceId,
-                            error: parseError instanceof Error ? parseError.message : 'Unknown error'
-                        });
-                    }
-
-                    await env.VibecoderStore.put(this.getWranglerKVKey(instanceId), configContent);
-                    this.logger.info('✅ [SETUP_INSTANCE] Wrangler configuration stored in KV', { instanceId });
-                } else {
-                    this.logger.warn('⚠️ [SETUP_INSTANCE] Could not read wrangler.jsonc for KV storage', { instanceId });
+                if (!wranglerConfigFile.success) {
+                    throw new Error(`Could not read wrangler.jsonc for KV storage in instance ${instanceId}`);
                 }
+
+                const config = parseWranglerConfig(wranglerConfigFile.content);
+                if (!config.vars || typeof config.vars !== 'object') {
+                    config.vars = {};
+                }
+
+                // Inject JWT secret so stores can validate platform-issued JWTs.
+                if ('JWT_SECRET' in env) {
+                    config.vars.PLATFORM_JWT_SECRET = env.JWT_SECRET;
+                    this.logger.info('🔐 [SETUP_INSTANCE] Injected PLATFORM_JWT_SECRET for admin dashboard auth', { instanceId });
+                }
+
+                // Inject admin dashboard URL for CORS.
+                if ('CUSTOM_DOMAIN' in env) {
+                    const protocol = (env.CUSTOM_DOMAIN as string).includes('localhost') ? 'http' : 'https';
+                    config.vars.ADMIN_DASHBOARD_URL = `${protocol}://${env.CUSTOM_DOMAIN}`;
+                    this.logger.info('🌐 [SETUP_INSTANCE] Injected ADMIN_DASHBOARD_URL for CORS', {
+                        instanceId,
+                        url: config.vars.ADMIN_DASHBOARD_URL
+                    });
+                }
+
+                const configContent = JSON.stringify(config, null, 2);
+                await env.VibecoderStore.put(this.getWranglerKVKey(instanceId), configContent);
+                this.logger.info('✅ [SETUP_INSTANCE] Wrangler configuration stored in KV', { instanceId });
             } catch (error) {
-                this.logger.warn('⚠️ [SETUP_INSTANCE] Failed to store wrangler config in KV (non-blocking)', {
+                this.logger.error('❌ [SETUP_INSTANCE] Failed to store wrangler config in KV', {
                     instanceId,
                     error: error instanceof Error ? error.message : 'Unknown error'
                 });
-                // Non-blocking - continue with setup
+                throw error;
             }
 
             // Allocate single port for both dev server and tunnel
@@ -1359,6 +1395,7 @@ export class SandboxSdkClient extends BaseSandboxService {
 
                     // Check if port is listening and also check what ports ARE listening
                     this.logger.info('🔌 [SETUP_INSTANCE] Checking if port is listening', { instanceId, port: allocatedPort });
+                    let previewPort = allocatedPort;
                     try {
                         const session = await this.getInstanceSession(instanceId);
 
@@ -1368,29 +1405,33 @@ export class SandboxSdkClient extends BaseSandboxService {
                         // Also check what ports ARE listening (to see what vite actually started on)
                         const allPortsResult = await session.exec(`netstat -tuln 2>/dev/null | grep LISTEN | awk '{print $4}' | sed 's/.*://' | sort -n | head -10 || ss -tuln 2>/dev/null | grep LISTEN | awk '{print $5}' | sed 's/.*://' | sort -n | head -10 || echo "Could not list ports"`);
 
+                        const listeningPorts = this.parseListeningPorts(allPortsResult.stdout);
+                        const isAllocatedPortListening = portCheckResult.stdout.includes(`:${allocatedPort}`);
                         this.logger.info('🔌 [SETUP_INSTANCE] Port listening check', {
                             instanceId,
                             port: allocatedPort,
                             exitCode: portCheckResult.exitCode,
                             stdout: portCheckResult.stdout,
                             stderr: portCheckResult.stderr,
-                            isListening: portCheckResult.stdout.includes(`:${allocatedPort}`),
-                            listeningPorts: allPortsResult.stdout.split('\n').filter(p => p.trim()).slice(0, 10)
+                            isListening: isAllocatedPortListening,
+                            listeningPorts: listeningPorts.slice(0, 10)
                         });
 
-                        if (!portCheckResult.stdout.includes(`:${allocatedPort}`)) {
-                            this.logger.warn('⚠️ [SETUP_INSTANCE] Expected port not listening, but other ports may be active', {
+                        if (!isAllocatedPortListening) {
+                            this.logger.error('❌ [SETUP_INSTANCE] Expected preview port is not listening - refusing fallback port selection', {
                                 instanceId,
                                 expectedPort: allocatedPort,
-                                actualListeningPorts: allPortsResult.stdout.split('\n').filter(p => p.trim())
+                                actualListeningPorts: listeningPorts
                             });
+                            throw new Error(`Expected preview port ${allocatedPort} is not listening. Active ports: ${listeningPorts.join(', ') || 'none'}`);
                         }
                     } catch (portError) {
-                        this.logger.warn('⚠️ [SETUP_INSTANCE] Failed to check port status', {
+                        this.logger.error('❌ [SETUP_INSTANCE] Port validation failed', {
                             instanceId,
                             port: allocatedPort,
                             error: portError instanceof Error ? portError.message : 'Unknown error'
                         });
+                        throw portError;
                     }
 
                     // Add a small delay to ensure server is fully listening before starting tunnel
@@ -1402,10 +1443,10 @@ export class SandboxSdkClient extends BaseSandboxService {
                     // Start cloudflared tunnel AFTER dev server is ready
                     let tunnelURL = '';
                     if (isDev(env) || env.USE_TUNNEL_FOR_PREVIEW) {
-                        this.logger.info('🌐 [SETUP_INSTANCE] Step 8: Starting cloudflared tunnel', { instanceId, port: allocatedPort });
+                        this.logger.info('🌐 [SETUP_INSTANCE] Step 8: Starting cloudflared tunnel', { instanceId, port: previewPort });
                         const tunnelStartTime = Date.now();
                         try {
-                            tunnelURL = await this.startCloudflaredTunnel(instanceId, allocatedPort);
+                            tunnelURL = await this.startCloudflaredTunnel(instanceId, previewPort);
                             const tunnelDuration = Date.now() - tunnelStartTime;
                             this.logger.info('✅ [SETUP_INSTANCE] Cloudflared tunnel started', {
                                 instanceId,
@@ -1423,25 +1464,33 @@ export class SandboxSdkClient extends BaseSandboxService {
                     }
 
                     // Expose the same port for preview URL
+                    const resolvedPreviewDomain = previewDomain || getPreviewDomain(env);
                     this.logger.info('🌍 [SETUP_INSTANCE] Step 9: Exposing port for preview URL', {
                         instanceId,
-                        port: allocatedPort,
-                        previewDomain: getPreviewDomain(env)
+                        port: previewPort,
+                        previewDomain: resolvedPreviewDomain
                     });
                     const exposeStartTime = Date.now();
-                    const previewResult = await sandbox.exposePort(allocatedPort, { hostname: getPreviewDomain(env) });
+                    const previewResult = await sandbox.exposePort(previewPort, { hostname: resolvedPreviewDomain });
                     let previewURL = previewResult.url;
                     if (!isDev(env)) {
-                        const previewDomain = getPreviewDomain(env);
-                        if (previewDomain) {
+                        if (resolvedPreviewDomain) {
                             // Replace CUSTOM_DOMAIN with previewDomain in previewURL
-                            previewURL = previewURL.replace(env.CUSTOM_DOMAIN, previewDomain);
+                            previewURL = previewURL.replace(env.CUSTOM_DOMAIN, resolvedPreviewDomain);
                             this.logger.info('🔄 [SETUP_INSTANCE] Replaced domain in preview URL', {
                                 original: previewResult.url,
                                 replaced: previewURL,
-                                previewDomain
+                                previewDomain: resolvedPreviewDomain
                             });
                         }
+                    }
+                    const normalizedPreviewURL = normalizePreviewUrl(previewURL);
+                    if (normalizedPreviewURL && normalizedPreviewURL !== previewURL) {
+                        this.logger.info('🔧 [SETUP_INSTANCE] Normalized preview hostname for DNS compatibility', {
+                            original: previewURL,
+                            normalized: normalizedPreviewURL
+                        });
+                        previewURL = normalizedPreviewURL;
                     }
                     const exposeDuration = Date.now() - exposeStartTime;
                     this.logger.info('✅ [SETUP_INSTANCE] Port exposed', {
@@ -1474,7 +1523,7 @@ export class SandboxSdkClient extends BaseSandboxService {
                             processStatus: finalProcess?.status,
                             previewURL,
                             tunnelURL,
-                            allocatedPort
+                            allocatedPort: previewPort
                         });
 
                         if (!isProcessRunning) {
@@ -1500,12 +1549,12 @@ export class SandboxSdkClient extends BaseSandboxService {
                         previewURL,
                         tunnelURL,
                         processId,
-                        allocatedPort,
+                        allocatedPort: previewPort,
                         hasPreviewURL: !!previewURL,
                         hasTunnelURL: !!tunnelURL
                     });
 
-                    return { previewURL, tunnelURL, processId, allocatedPort };
+                    return { previewURL, tunnelURL, processId, allocatedPort: previewPort };
                 } catch (error) {
                     const totalDuration = Date.now() - setupStartTime;
                     this.logger.error('❌ [SETUP_INSTANCE] Failed to start dev server', {
@@ -1547,11 +1596,24 @@ export class SandboxSdkClient extends BaseSandboxService {
                 this.logger.warn('Failed to read .donttouch_files.json');
                 return donttouchFiles;
             }
-            donttouchFiles = JSON.parse(donttouchFile.content) as string[];
+            donttouchFiles = this.sanitizeDontTouchFiles(
+                JSON.parse(donttouchFile.content) as string[]
+            );
         } catch (error) {
             this.logger.warn(`Failed to read .donttouch_files.json: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
         return donttouchFiles;
+    }
+
+    private sanitizeDontTouchFiles(filePaths: string[]): string[] {
+        const sanitized = filePaths.filter((filePath) => !filePath.startsWith('storefront-app/theme/'));
+        if (sanitized.length !== filePaths.length) {
+            const removed = filePaths.filter((filePath) => filePath.startsWith('storefront-app/theme/'));
+            this.logger.warn('Removed storefront theme files from donttouch list to allow generation', {
+                removedFiles: removed
+            });
+        }
+        return sanitized;
     }
 
     private async fetchRedactedFiles(templateName: string): Promise<string[]> {
@@ -1571,20 +1633,29 @@ export class SandboxSdkClient extends BaseSandboxService {
         return redactedFiles;
     }
 
-    async createInstance(templateName: string, projectName: string, webhookUrl?: string, localEnvVars?: Record<string, string>): Promise<BootstrapResponse> {
+    async createInstance(options: InstanceCreationRequest): Promise<BootstrapResponse> {
+        const {
+            files = [],
+            projectName,
+            webhookUrl,
+            previewDomain,
+            envVars: localEnvVars = {},
+        } = options;
+        const templateName = 'base-store';
         const createStartTime = Date.now();
         this.logger.info('🏗️ [CREATE_INSTANCE] Starting instance creation', {
             templateName,
             projectName,
             webhookUrl,
             hasLocalEnvVars: !!localEnvVars && Object.keys(localEnvVars).length > 0,
-            envVarKeys: localEnvVars ? Object.keys(localEnvVars) : []
+            envVarKeys: localEnvVars ? Object.keys(localEnvVars) : [],
+            previewDomain: previewDomain || getPreviewDomain(env)
         });
 
         try {
             // Environment variables will be set via session creation on first use
-            if (envVars && Object.keys(envVars).length > 0) {
-                this.logger.info('Environment variables will be configured via session', { envVars: Object.keys(envVars) });
+            if (localEnvVars && Object.keys(localEnvVars).length > 0) {
+                this.logger.info('Environment variables will be configured via session', { envVars: Object.keys(localEnvVars) });
             }
             let instanceId: string;
             if (env.ALLOCATION_STRATEGY === 'one_to_one') {
@@ -1620,12 +1691,10 @@ export class SandboxSdkClient extends BaseSandboxService {
             }
             this.logger.info('🏗️ [CREATE_INSTANCE] Creating sandbox instance', { instanceId, templateName, projectName });
 
-            let results: { previewURL: string, tunnelURL: string, processId: string, allocatedPort: number } | undefined;
-
-            this.logger.info('📦 [CREATE_INSTANCE] Step 1: Ensuring template exists', { templateName });
-            const templateStartTime = Date.now();
-            await this.ensureTemplateExists(templateName);
-            const templateDuration = Date.now() - templateStartTime;
+			this.logger.info('📦 [CREATE_INSTANCE] Step 1: Ensuring template exists', { templateName });
+			const templateStartTime = Date.now();
+			await this.ensureTemplateExists(templateName);
+			const templateDuration = Date.now() - templateStartTime;
             this.logger.info('✅ [CREATE_INSTANCE] Template ensured', { templateName, durationMs: templateDuration });
 
             this.logger.info('📋 [CREATE_INSTANCE] Step 2: Fetching donttouch and redacted files', { templateName });
@@ -1658,13 +1727,32 @@ export class SandboxSdkClient extends BaseSandboxService {
             }
             this.logger.info('✅ [CREATE_INSTANCE] Template moved successfully', { durationMs: moveDuration });
 
+            if (files.length > 0) {
+                this.logger.info('📄 [CREATE_INSTANCE] Step 3.5: Overlaying provided project files', {
+                    fileCount: files.length,
+                });
+                const writeResult = await this.writeFilesBulk(instanceId, files);
+                if (!writeResult.success) {
+                    this.logger.error('❌ [CREATE_INSTANCE] Failed to write provided files', {
+                        error: writeResult.error,
+                    });
+                    throw new Error(`Failed to write instance files: ${writeResult.error || 'Unknown error'}`);
+                }
+            }
+
             this.logger.info('⚙️ [CREATE_INSTANCE] Step 4: Setting up instance', {
                 instanceId,
                 projectName,
-                hasEnvVars: !!localEnvVars && Object.keys(localEnvVars).length > 0
+                hasEnvVars: !!localEnvVars && Object.keys(localEnvVars).length > 0,
+                previewDomain: previewDomain || getPreviewDomain(env)
             });
             const setupStartTime = Date.now();
-            const setupPromise = () => this.setupInstance(instanceId, projectName, localEnvVars);
+            const setupPromise = () => this.setupInstance(
+                instanceId,
+                projectName,
+                localEnvVars,
+                previewDomain
+            );
             const setupResult = await setupPromise();
             const setupDuration = Date.now() - setupStartTime;
 
@@ -1679,29 +1767,29 @@ export class SandboxSdkClient extends BaseSandboxService {
                 };
             }
 
-            this.logger.info('✅ [CREATE_INSTANCE] Instance setup completed', {
-                instanceId,
-                durationMs: setupDuration,
-                hasPreviewURL: !!setupResult.previewURL,
-                hasTunnelURL: !!setupResult.tunnelURL,
-                hasProcessId: !!setupResult.processId,
-                allocatedPort: setupResult.allocatedPort
-            });
+				this.logger.info('✅ [CREATE_INSTANCE] Instance setup completed', {
+					instanceId,
+					durationMs: setupDuration,
+					hasPreviewURL: !!setupResult.previewURL,
+					hasTunnelURL: !!setupResult.tunnelURL,
+					hasProcessId: !!setupResult.processId,
+					allocatedPort: setupResult.allocatedPort
+				});
+				const results = setupResult;
 
-            results = setupResult;
-
-            this.logger.info('💾 [CREATE_INSTANCE] Step 5: Storing instance metadata', { instanceId });
-            const metadataStartTime = Date.now();
-            // Store instance metadata
+				this.logger.info('💾 [CREATE_INSTANCE] Step 5: Storing instance metadata', { instanceId });
+				const metadataStartTime = Date.now();
+				// Store instance metadata
             const metadata = {
                 projectName: projectName,
                 startTime: new Date().toISOString(),
                 webhookUrl: webhookUrl,
+                previewDomain: previewDomain || getPreviewDomain(env),
                 previewURL: results.previewURL,
                 processId: results.processId,
                 tunnelURL: results.tunnelURL,
                 allocatedPort: results.allocatedPort,
-                donttouch_files: dontTouchFiles,
+                donttouch_files: donttouchFiles,
                 redacted_files: redactedFiles,
             };
             await this.storeInstanceMetadata(instanceId, metadata);
@@ -1776,7 +1864,7 @@ export class SandboxSdkClient extends BaseSandboxService {
                 serviceDirectory: instanceId,
                 fileTree,
                 runtimeErrors: runtimeErrors.errors,
-                previewURL: migratePreviewUrl(metadata.previewURL, env),
+                previewURL: migratePreviewUrl(metadata.previewURL, env, metadata.previewDomain),
                 processId: metadata.processId,
                 tunnelURL: metadata.tunnelURL,
             };
@@ -1823,6 +1911,15 @@ export class SandboxSdkClient extends BaseSandboxService {
                         }
                     }
                 }
+
+                // Validate preview port is still listening.
+                if (isHealthy && metadata.allocatedPort) {
+                    const portListening = await this.isPortListening(instanceId, metadata.allocatedPort);
+                    if (!portListening) {
+                        this.logger.warn(`Preview port ${metadata.allocatedPort} is not listening for instance ${instanceId}`);
+                        isHealthy = false;
+                    }
+                }
             } catch {
                 // No preview available
                 isHealthy = false;
@@ -1833,7 +1930,7 @@ export class SandboxSdkClient extends BaseSandboxService {
                 pending: false,
                 isHealthy,
                 message: isHealthy ? 'Instance is running normally' : 'Instance may have issues',
-                previewURL: migratePreviewUrl(metadata.previewURL, env),
+                previewURL: migratePreviewUrl(metadata.previewURL, env, metadata.previewDomain),
                 tunnelURL: metadata.tunnelURL,
                 processId: metadata.processId
             };
@@ -2536,7 +2633,7 @@ export class SandboxSdkClient extends BaseSandboxService {
 
             // Step 2: Parse wrangler config from KV
             this.logger.info('Reading wrangler configuration from KV');
-            let wranglerConfigContent = await env.VibecoderStore.get(this.getWranglerKVKey(instanceId));
+			const wranglerConfigContent = await env.VibecoderStore.get(this.getWranglerKVKey(instanceId));
 
             if (!wranglerConfigContent) {
                 // This should never happen unless KV itself has some issues
@@ -2642,6 +2739,7 @@ export class SandboxSdkClient extends BaseSandboxService {
             );
 
             // Step 7: Deploy using pure function
+            const target: DeploymentTarget = 'platform';
             const useDispatch = target === 'platform';
             this.logger.info('Deploying to Cloudflare', { target });
             

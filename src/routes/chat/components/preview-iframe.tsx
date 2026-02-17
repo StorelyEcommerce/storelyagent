@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, forwardRef, useCallback } from 'react';
 import { RefreshCw, AlertCircle } from 'lucide-react';
 import { WebSocket } from 'partysocket';
+import { getPreviewUrlCandidates } from '@/lib/utils';
 
 interface PreviewIframeProps {
 	src: string;
@@ -199,16 +200,30 @@ export const PreviewIframe = forwardRef<HTMLIFrameElement, PreviewIframeProps>(
 				errorMessage: null,
 			});
 
-			// Test availability
-			const previewType = await testAvailability(url);
+			// Test primary and fallback URL candidates.
+			const candidates = getPreviewUrlCandidates(url);
+			const urlsToTest = candidates.length > 0 ? candidates : [url];
+			let resolvedUrl: string | null = null;
+			let previewType: 'sandbox' | 'dispatcher' | null = null;
 
-			if (previewType) {
+			for (const candidate of urlsToTest) {
+				previewType = await testAvailability(candidate);
+				if (previewType) {
+					resolvedUrl = candidate;
+					break;
+				}
+			}
+
+			if (previewType && resolvedUrl) {
 				// Success: put component into postload state, keep loading UI visible
-				console.log(`Preview available (${previewType}) at attempt ${attempt + 1}`);
+				console.log(`Preview available (${previewType}) at attempt ${attempt + 1}`, {
+					resolvedUrl,
+					triedUrls: urlsToTest,
+				});
 				setLoadState({
 					status: 'postload',
 					attempt: attempt + 1,
-					loadedSrc: url,
+					loadedSrc: resolvedUrl,
 					errorMessage: null,
 					previewType,
 				});
@@ -221,7 +236,7 @@ export const PreviewIframe = forwardRef<HTMLIFrameElement, PreviewIframeProps>(
 						...prev,
 						status: 'loaded',
 					}));
-					requestScreenshot(url);
+					requestScreenshot(resolvedUrl);
 				}, waitTime);
 			} else {
 				// Not available yet - retry with backoff

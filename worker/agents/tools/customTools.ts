@@ -1,6 +1,8 @@
 import type { ToolDefinition } from './types';
+import type { ChatCompletionMessageFunctionToolCall } from 'openai/resources';
 import { StructuredLogger, createLogger } from '../../logger';
 import { RenderToolCall } from '../operations/UserConversationProcessor';
+import type { Message } from '../inferutils/common';
 import { toolWebSearchDefinition } from './toolkit/web-search';
 import { toolFeedbackDefinition } from './toolkit/feedback';
 import { createQueueRequestTool } from './toolkit/queue-request';
@@ -20,6 +22,8 @@ import { createWaitForGenerationTool } from './toolkit/wait-for-generation';
 import { createWaitForDebugTool } from './toolkit/wait-for-debug';
 import { createGitTool } from './toolkit/git';
 import { mcpManager } from './mcpManager';
+import { ICodingAgent } from '../services/interfaces/ICodingAgent';
+import type { DeepDebuggerSession } from '../operations/DeepDebugger';
 
 const buildToolsLogger = createLogger('buildTools');
 
@@ -28,9 +32,9 @@ export async function executeToolWithDefinition<TArgs, TResult>(
     toolDef: ToolDefinition<TArgs, TResult>,
     args: TArgs
 ): Promise<TResult> {
-    await toolDef.onStart?.(toolCall, args);
+    await (toolDef.onStart as ((toolCall: ChatCompletionMessageFunctionToolCall, args: TArgs) => Promise<void> | void) | undefined)?.(toolCall, args);
     const result = await toolDef.implementation(args);
-    await toolDef.onComplete?.(toolCall, args, result);
+    await (toolDef.onComplete as ((toolCall: ChatCompletionMessageFunctionToolCall, args: TArgs, result: TResult) => Promise<void> | void) | undefined)?.(toolCall, args, result);
     return result;
 }
 
@@ -39,7 +43,7 @@ export async function executeToolWithDefinition<TArgs, TResult>(
  * Add new tools here - they're automatically included in the conversation
  */
 export async function buildTools(
-    agent: CodingAgentInterface,
+    agent: ICodingAgent,
     logger: StructuredLogger,
     toolRenderer: RenderToolCall,
     streamCb: (chunk: string) => void,
@@ -123,13 +127,13 @@ export function withRenderer(
         return {
             ...td,
             onStart: async (tc: ChatCompletionMessageFunctionToolCall, args: Record<string, unknown>) => {
-                await originalOnStart?.(tc, args);
+                await (originalOnStart as ((toolCall: ChatCompletionMessageFunctionToolCall, args: Record<string, unknown>) => Promise<void> | void) | undefined)?.(tc, args);
                 if (toolRenderer) {
                     toolRenderer({ name: td.name, status: 'start', args });
                 }
             },
             onComplete: async (tc: ChatCompletionMessageFunctionToolCall, args: Record<string, unknown>, result: unknown) => {
-                await originalOnComplete?.(tc, args, result);
+                await (originalOnComplete as ((toolCall: ChatCompletionMessageFunctionToolCall, args: Record<string, unknown>, result: unknown) => Promise<void> | void) | undefined)?.(tc, args, result);
                 if (toolRenderer) {
                     toolRenderer({
                         name: td.name,

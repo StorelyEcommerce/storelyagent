@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { generalSystemPromptBuilder } from './prompts';
+import { generalSystemPromptBuilder, getUsecaseSpecificInstructions } from './prompts';
 import type { DesignDNA } from './schemas';
 
 describe('generalSystemPromptBuilder', () => {
@@ -36,5 +36,19 @@ describe('generalSystemPromptBuilder', () => {
 		expect(formatted).toContain('visualDirection');
 		expect(formatted).toContain('Editorial modern luxury');
 		expect(formatted).toContain('</DESIGN_DNA>');
+	});
+
+	test('includes selected style guidance for ecommerce use case', () => {
+		const instructions = getUsecaseSpecificInstructions({
+			selectedTemplateName: 'base-store',
+			reasoning: 'Best match',
+			useCase: 'E-Commerce',
+			complexity: 'simple',
+			styleSelection: 'Brutalism',
+			projectName: 'Street Forge',
+		});
+
+		expect(instructions).toContain('Use the following artistic style:');
+		expect(instructions).toContain('Style Name: Brutalism');
 	});
 });

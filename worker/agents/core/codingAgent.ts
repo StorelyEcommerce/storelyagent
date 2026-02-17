@@ -4,7 +4,6 @@ import { AgenticState, AgentState, BaseProjectState, CurrentDevState, MAX_PHASES
 import { Blueprint } from "../schemas";
 import { BaseCodingBehavior } from "./behaviors/base";
 import { createObjectLogger, StructuredLogger } from '../../logger';
-import { InferenceMetadata } from "../inferutils/config.types";
 import { getMimeType } from 'hono/utils/mime';
 import { normalizePath, isPathSafe } from '../../utils/pathUtils';
 import { FileManager } from '../services/implementations/FileManager';
@@ -23,7 +22,7 @@ import { PreviewType, TemplateDetails } from "worker/services/sandbox/sandboxTyp
 import { WebSocketMessageResponses } from "../constants";
 import { AppService, ModelConfigService } from "worker/database";
 import { ConversationMessage, ConversationState } from "../inferutils/common";
-import { ImageAttachment } from "worker/types/image-attachment";
+import { ImageAttachment, type ProcessedImageAttachment } from "worker/types/image-attachment";
 import { RateLimitExceededError } from "shared/types/errors";
 import { ProjectObjective } from "./objectives/base";
 import { FileOutputType } from "../schemas";
@@ -31,6 +30,9 @@ import { SecretsClient, type UserSecretsStoreStub } from '../../services/secrets
 import { StateMigration } from './stateMigration';
 import { PendingWsTicket, TicketConsumptionResult } from '../../types/auth-types';
 import { WsTicketManager } from '../../utils/wsTicketManager';
+import { uploadImage, ImageType } from 'worker/utils/images';
+import { IdGenerator } from '../utils/idGenerator';
+import { normalizePreviewUrl } from 'worker/utils/urls';
 
 const DEFAULT_CONVERSATION_SESSION_ID = 'default';
 
@@ -62,22 +64,24 @@ export class CodeGeneratorAgent extends Agent<Env, AgentState> implements AgentI
     // Initialization
     // ==========================================
     
-    initialState = {
-        behaviorType: 'unknown' as BehaviorType,
-        projectType: 'unknown' as ProjectType,
-        projectName: "",
-        query: "",
-        sessionId: '',
-        hostname: '',
-        blueprint: {} as unknown as Blueprint,
-        templateName: '',
-        generatedFilesMap: {},
-        conversationMessages: [],
-        metadata: {} as InferenceMetadata,
-        shouldBeGenerating: false,
-        sandboxInstanceId: undefined,
+	    initialState: AgentState = {
+	        behaviorType: 'phasic',
+	        projectType: 'app',
+	        projectName: "",
+	        query: "",
+	        sessionId: '',
+	        hostname: '',
+	        blueprint: {} as unknown as Blueprint,
+	        // Default to the platform's base template; state can be overwritten during template selection.
+	        templateName: 'base-store',
+	        generatedFilesMap: {},
+	        conversationMessages: [],
+	        metadata: { agentId: '', userId: '' },
+	        shouldBeGenerating: false,
+	        sandboxInstanceId: undefined,
         commandsHistory: [],
         lastPackageJson: '',
+        agentMode: 'deterministic',
         pendingUserInputs: [],
         projectUpdatesAccumulator: [],
         lastDeepDebugTranscript: null,
@@ -86,7 +90,7 @@ export class CodeGeneratorAgent extends Agent<Env, AgentState> implements AgentI
         generatedPhases: [],
         currentDevState: CurrentDevState.IDLE,
         phasesCounter: MAX_PHASES,
-    } as AgentState;
+    };
 
     constructor(ctx: AgentContext, env: Env) {
         super(ctx, env);
@@ -95,9 +99,9 @@ export class CodeGeneratorAgent extends Agent<Env, AgentState> implements AgentI
         void this.sql`CREATE TABLE IF NOT EXISTS compact_conversations (id TEXT PRIMARY KEY, messages TEXT)`;
 
         // Create StateManager
-        const stateManager = new StateManager(
-            () => this.state,
-            (s) => this.setState(s)
+        const stateManager = new StateManager<BaseProjectState>(
+            () => this.state as BaseProjectState,
+            (s) => this.setState(s as AgentState)
         );
         
         this.git = new GitVersionControl(this.sql.bind(this));
@@ -129,6 +133,9 @@ export class CodeGeneratorAgent extends Agent<Env, AgentState> implements AgentI
         ..._args: unknown[]
     ): Promise<AgentState> {
         const { inferenceContext } = initArgs;
+        if (!inferenceContext.metadata) {
+            throw new Error('Missing inference metadata for agent initialization');
+        }
         const sandboxSessionId = DeploymentManager.generateNewSessionId();
         this.initLogger(inferenceContext.metadata.agentId, inferenceContext.metadata.userId, sandboxSessionId);
 
@@ -185,9 +192,6 @@ export class CodeGeneratorAgent extends Agent<Env, AgentState> implements AgentI
             return;
         }
 
-        // Ensure state is migrated for any previous versions
-        this.behavior.migrateStateIfNeeded();
-        
         // Check if this is a read-only operation
         const readOnlyMode = props?.readOnlyMode === true;
         
@@ -197,9 +201,13 @@ export class CodeGeneratorAgent extends Agent<Env, AgentState> implements AgentI
         }
         
         // Just in case
-        await this.gitInit();
-        
-        await this.behavior.ensureTemplateDetails();
+	        await this.gitInit();
+
+	        // Ensure template is available before any migrations touch template files.
+	        await this.behavior.ensureTemplateDetails();
+
+        // Ensure state is migrated for any previous versions
+        this.behavior.migrateStateIfNeeded();
         this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} onStart processed successfully`);
 
         // Load the latest user configs
@@ -209,22 +217,44 @@ export class CodeGeneratorAgent extends Agent<Env, AgentState> implements AgentI
         this.logger().info(`Agent ${this.getAgentId()} session: ${this.state.sessionId} onStart: User configs loaded successfully`, {userConfigsRecord});
     }
     
-    onConnect(connection: Connection, ctx: ConnectionContext) {
-        this.logger().info(`Agent connected for agent ${this.getAgentId()}`, { connection, ctx });
-        let previewUrl = '';
-        try {
-            if (this.behavior.getTemplateDetails().renderMode === 'browser') {
-                previewUrl = this.behavior.getBrowserPreviewURL();
-            }
-        } catch (error) {
-            this.logger().error('Error getting preview URL:', error);
-        }
-        sendToConnection(connection, WebSocketMessageResponses.AGENT_CONNECTED, {
-            state: this.state,
-            templateDetails: this.behavior.getTemplateDetails(),
-            previewUrl: previewUrl
-        });
-    }
+	    onConnect(connection: Connection, ctx: ConnectionContext) {
+	        this.logger().info(`Agent connected for agent ${this.getAgentId()}`, { connection, ctx });
+	        let templateDetails: TemplateDetails | null = null;
+	        let previewUrl = '';
+	        try {
+	            templateDetails = this.behavior.getTemplateDetails();
+	            previewUrl = normalizePreviewUrl(this.behavior.getPreviewUrlCache()) || '';
+	        } catch (error) {
+	            this.logger().warn('Template details not available during onConnect; continuing without them', { error });
+	            // Recover legacy/incomplete state in background and notify client when ready.
+	            void this.behavior.ensureTemplateDetails()
+	                .then((resolvedTemplateDetails) => {
+	                    if (!resolvedTemplateDetails) {
+	                        return;
+	                    }
+	                    sendToConnection(connection, WebSocketMessageResponses.TEMPLATE_UPDATED, {
+	                        templateDetails: resolvedTemplateDetails,
+	                    });
+	                })
+	                .catch((ensureError) => {
+	                    this.logger().error('Failed to load template details during onConnect recovery', ensureError);
+	                });
+	        }
+	        sendToConnection(connection, WebSocketMessageResponses.AGENT_CONNECTED, {
+	            state: this.state,
+	            templateDetails,
+	            previewURL: previewUrl
+	        });
+
+	        // If we are waiting for store metadata, send the prompt as a normal chat response.
+	        if (this.state.storeInfoPending && this.state.pendingInitArgs?.storeInfoMessage) {
+	            sendToConnection(connection, WebSocketMessageResponses.CONVERSATION_RESPONSE, {
+	                message: this.state.pendingInitArgs.storeInfoMessage,
+	                conversationId: IdGenerator.generateConversationId(),
+	                isStreaming: false,
+	            });
+	        }
+	    }
 
     private initLogger(agentId: string, userId: string, sessionId?: string) {
         this._logger = createObjectLogger(this, 'CodeGeneratorAgent');
@@ -321,7 +351,7 @@ export class CodeGeneratorAgent extends Agent<Env, AgentState> implements AgentI
     }
 
     getPreviewUrlCache(): string {
-        return ''; // Unimplemented
+        return this.behavior.getPreviewUrlCache();
     }
 
     deployToSandbox(
@@ -353,26 +383,75 @@ export class CodeGeneratorAgent extends Agent<Env, AgentState> implements AgentI
         this.logger().info(`Saving agent ${this.getAgentId()} to database`);
         // Save the app to database (authenticated users only)
         const appService = new AppService(this.env);
-        await appService.createApp({
-            id: this.state.metadata.agentId,
-            userId: this.state.metadata.userId,
-            sessionToken: null,
-            title: this.state.blueprint.title || this.state.query.substring(0, 100),
-            description: this.state.blueprint.description,
-            originalPrompt: this.state.query,
-            finalPrompt: this.state.query,
-            framework: this.state.blueprint.frameworks.join(','),
-            visibility: 'private',
-            status: 'generating',
+        const appId = this.state.metadata.agentId;
+        const appTitle = (this.state.blueprint.title || this.state.query.substring(0, 100)).trim();
+        const appDescription = this.state.blueprint.description?.trim().substring(0, 500) || null;
+        const appFramework = this.state.blueprint.frameworks?.join(',') || null;
+
+        try {
+            await appService.createApp({
+                id: appId,
+                userId: this.state.metadata.userId,
+                sessionToken: null,
+                title: appTitle,
+                description: appDescription,
+                originalPrompt: this.state.query,
+                finalPrompt: this.state.query,
+                framework: appFramework,
+                visibility: 'private',
+                status: 'generating',
                 createdAt: new Date(),
-            updatedAt: new Date()
+                updatedAt: new Date()
             });
-        this.logger().info(`App saved successfully to database for agent ${this.state.metadata.agentId}`, { 
-            agentId: this.state.metadata.agentId, 
-            userId: this.state.metadata.userId,
-            visibility: 'private'
-        });
-        this.logger().info(`Agent initialized successfully for agent ${this.state.metadata.agentId}`);
+            this.logger().info(`App saved successfully to database for agent ${appId}`, {
+                agentId: appId,
+                userId: this.state.metadata.userId,
+                visibility: 'private'
+            });
+        } catch (error: any) {
+            this.logger().warn(`App insert failed for agent ${appId}, attempting update fallback`, {
+                errorMessage: error?.message,
+                errorCode: error?.code,
+                causeMessage: error?.cause?.message,
+            });
+
+            const updated = await appService.updateApp(appId, {
+                title: appTitle,
+                description: appDescription,
+                originalPrompt: this.state.query,
+                finalPrompt: this.state.query,
+                framework: appFramework,
+                updatedAt: new Date(),
+            });
+
+            if (!updated) {
+                this.logger().error(`App update fallback failed for agent ${appId}`, {
+                    errorMessage: error?.message,
+                    errorCode: error?.code,
+                    causeMessage: error?.cause?.message,
+                });
+                throw error;
+            }
+
+            this.logger().info(`App updated successfully for agent ${appId} after insert fallback`);
+        }
+
+        this.logger().info(`Agent initialized successfully for agent ${appId}`);
+    }
+
+    private async ensureProcessedImages(
+        images: Array<ImageAttachment | ProcessedImageAttachment> | undefined
+    ): Promise<ProcessedImageAttachment[]> {
+        if (!images || images.length === 0) {
+            return [];
+        }
+
+        return Promise.all(images.map((image) => {
+            if ('publicUrl' in image) {
+                return image as ProcessedImageAttachment;
+            }
+            return uploadImage(this.env, image as ImageAttachment, ImageType.UPLOADS);
+        }));
     }
 
     // ==========================================
@@ -518,14 +597,79 @@ export class CodeGeneratorAgent extends Agent<Env, AgentState> implements AgentI
                 imageCount: images?.length || 0
             });
 
-            await this.behavior.handleUserInput(userMessage, images);
-            if (!this.behavior.isCodeGenerating()) {
-                // If idle, start generation process
-                this.logger().info('User input during IDLE state, starting generation');
-                this.behavior.generateAllFiles().catch(error => {
-                    this.logger().error('Error starting generation from user input:', error);
+            // If we are waiting for store info, user response should complete initialization:
+            // select template with enriched query, initialize agent state, then start generation.
+	            if (this.state.storeInfoPending && this.state.pendingInitArgs) {
+	                const pendingInitArgs = this.state.pendingInitArgs;
+	                const updatedQuery = `${pendingInitArgs.query}\n\nUser provided store name and visual design style for the website's appearance (colors, fonts, layout aesthetic): ${userMessage}`;
+	                const selectionImages = images || pendingInitArgs.images;
+
+                this.logger().info('Selecting template with complete query after store info collection');
+                const { getTemplateForQuery } = await import('../index');
+                const { templateDetails, selection } = await getTemplateForQuery(
+                    this.env,
+                    pendingInitArgs.inferenceContext,
+                    updatedQuery,
+                    selectionImages,
+                    this.logger()
+                );
+
+                const processedImages = await this.ensureProcessedImages(selectionImages);
+                await this.initialize({
+                    query: updatedQuery,
+                    language: pendingInitArgs.language,
+                    frameworks: pendingInitArgs.frameworks,
+                    hostname: pendingInitArgs.hostname,
+                    inferenceContext: pendingInitArgs.inferenceContext,
+                    images: processedImages,
+                    templateInfo: { templateDetails, selection },
+                    onBlueprintChunk: () => { }
                 });
-            }
+
+	                this.setState({
+	                    ...this.state,
+	                    pendingInitArgs: undefined,
+	                    storeInfoPending: false,
+	                    shouldBeGenerating: true
+	                });
+
+                this.broadcast(WebSocketMessageResponses.TEMPLATE_UPDATED, { templateDetails });
+
+	                if (!this.behavior.isCodeGenerating()) {
+	                    this.logger().info('Starting code generation after store info initialization');
+	                    this.behavior.generateAllFiles().catch(error => {
+	                        this.logger().error('Error starting generation after store info:', error);
+	                    }).finally(() => {
+	                        if (!this.behavior.isCodeGenerating()) {
+	                            this.setState({
+	                                ...this.state,
+	                                shouldBeGenerating: false
+	                            });
+	                        }
+	                    });
+	                }
+	                return;
+	            }
+
+	            await this.behavior.handleUserInput(userMessage, images);
+	            if (!this.behavior.isCodeGenerating()) {
+	                this.setState({
+	                    ...this.state,
+	                    shouldBeGenerating: true
+	                });
+	                // If idle, start generation process
+	                this.logger().info('User input during IDLE state, starting generation');
+	                this.behavior.generateAllFiles().catch(error => {
+	                    this.logger().error('Error starting generation from user input:', error);
+	                }).finally(() => {
+	                    if (!this.behavior.isCodeGenerating()) {
+	                        this.setState({
+	                            ...this.state,
+	                            shouldBeGenerating: false
+	                        });
+	                    }
+	                });
+	            }
 
         } catch (error) {
             if (error instanceof RateLimitExceededError) {
@@ -538,6 +682,15 @@ export class CodeGeneratorAgent extends Agent<Env, AgentState> implements AgentI
             this.broadcastError('Error processing user input', error);
         }
     }
+
+    public isCodeGenerating(): boolean {
+        return this.behavior.isCodeGenerating();
+    }
+
+    public cancelCurrentInference(): boolean {
+        return this.behavior.cancelCurrentInference();
+    }
+
     // ==========================================
     // WebSocket Management
     // ==========================================

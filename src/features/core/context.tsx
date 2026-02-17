@@ -82,7 +82,7 @@ export function FeatureProvider({ children, initialFeatureId }: FeatureProviderP
 		try {
 			const response = await apiClient.getCapabilities();
 			if (response.success && response.data) {
-				featureRegistry.updateFromCapabilities(response.data.features);
+				featureRegistry.updateFromCapabilities(response.data.features ?? []);
 				setState((prev) => ({
 					...prev,
 					capabilities: response.data!,

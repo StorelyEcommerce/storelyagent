@@ -190,6 +190,8 @@ export class RateLimitService {
 		user: AuthUser,
 		request: Request
 	): Promise<void> {
+		// Disabled intentionally (local/dev + product iteration). Keep method for future re-enable.
+		return;
 		if (!config[RateLimitType.APP_CREATION].enabled) {
 			return;
 		}
@@ -257,10 +259,10 @@ export class RateLimitService {
 		
 		const key = this.buildRateLimitKey(RateLimitType.LLM_CALLS, `${identifier}${suffix}`);
 		
-		try {
-            // Increment by model's credit cost
-            const modelConfig = AI_MODEL_CONFIG[model as AIModels];
-            const incrementBy = modelConfig.creditCost;
+			try {
+	            // Increment by model's credit cost
+	            const modelConfig = AI_MODEL_CONFIG[model as AIModels];
+	            const incrementBy = (modelConfig as unknown as { creditCost?: number })?.creditCost ?? 1;
 
 			const result = await this.enforce(env, key, config, RateLimitType.LLM_CALLS, incrementBy);
 			if (!result.success) {

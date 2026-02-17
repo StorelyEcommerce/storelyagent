@@ -16,7 +16,6 @@ import { FileRegenerationOperation } from '../../operations/FileRegeneration';
 // Database schema imports removed - using zero-storage OAuth flow
 import { BaseSandboxService } from '../../../services/sandbox/BaseSandboxService';
 import { getTemplateImportantFiles } from '../../../services/sandbox/utils';
-import { createScratchTemplateDetails } from '../../utils/templates';
 import { WebSocketMessageData, WebSocketMessageType } from '../../../api/websocketTypes';
 import { AgentActionKey, InferenceContext, InferenceRuntimeOverrides, ModelConfig } from '../../inferutils/config.types';
 import { ModelConfigService } from '../../../database/services/ModelConfigService';
@@ -79,6 +78,7 @@ export abstract class BaseCodingBehavior<TState extends BaseProjectState>
     protected deepDebugConversationId: string | null = null;
 
     protected staticAnalysisCache: StaticAnalysisResponse | null = null;
+    protected previewUrlCache = '';
 
     protected userModelConfigs?: Record<AgentActionKey, ModelConfig>;
     protected runtimeOverrides?: InferenceRuntimeOverrides;
@@ -116,6 +116,12 @@ export abstract class BaseCodingBehavior<TState extends BaseProjectState>
         const { templateInfo } = initArgs;
         if (templateInfo) {
             this.templateDetailsCache = templateInfo.templateDetails;
+            if (!this.state.templateName && templateInfo.templateDetails?.name) {
+                this.setState({
+                    ...this.state,
+                    templateName: templateInfo.templateDetails.name,
+                });
+            }
             
             await this.ensureTemplateDetails();
         }
@@ -128,35 +134,42 @@ export abstract class BaseCodingBehavior<TState extends BaseProjectState>
         return Promise.resolve();
     }
 
-    protected async initializeAsync(): Promise<void> {
-        try {
-            const [, setupCommands] = await Promise.all([
-                this.deployToSandbox(),
-                this.getProjectSetupAssistant().generateSetupCommands(),
-                this.generateReadme()
-            ]);
-            this.logger.info("Deployment to sandbox service and initial commands predictions completed successfully");
-                await this.executeCommands(setupCommands.commands);
-                this.logger.info("Initial commands executed successfully");
-        } catch (error) {
-            this.logger.error("Error during async initialization:", error);
-            // throw error;
-        }
-    }
+	    protected async initializeAsync(): Promise<void> {
+	        try {
+	            const [, setupCommands] = await Promise.all([
+	                this.deployToSandbox(),
+	                this.getProjectSetupAssistant().generateSetupCommands(),
+	                this.generateReadme()
+	            ]);
+	            this.logger.info("Deployment to sandbox service and initial commands predictions completed successfully");
+	                await this.executeCommands(setupCommands.commands);
+	                this.logger.info("Initial commands executed successfully");
+
+	            const hasBlueprint = !!this.state.blueprint && Object.keys(this.state.blueprint).length > 0;
+	            const hasTemplate = !!this.state.templateName && this.state.templateName.trim().length > 0;
+	            if (this.state.shouldBeGenerating && hasBlueprint && hasTemplate && !this.isCodeGenerating()) {
+	                this.logger.info('Starting generation after async initialization (shouldBeGenerating=true)');
+	                this.generateAllFiles().catch((error: unknown) => {
+	                    this.broadcastError('Error starting generation after async initialization', error);
+	                });
+	            }
+	        } catch (error) {
+	            this.logger.error("Error during async initialization:", error);
+	            // throw error;
+	        }
+	    }
     onStateUpdate(_state: TState, _source: "server" | Connection) {}
 
-    async ensureTemplateDetails() {
-        // Skip fetching details for "scratch" baseline
-        if (!this.templateDetailsCache) {
-            if (this.state.templateName === 'scratch') {
-                this.logger.info('Skipping template details fetch for scratch baseline');
-                return;
-            }
-            this.logger.info(`Loading template details for: ${this.state.templateName}`);
-            const results = await BaseSandboxService.getTemplateDetails(this.state.templateName);
-            if (!results.success || !results.templateDetails) {
-                throw new Error(`Failed to get template details for: ${this.state.templateName}`);
-            }
+	async ensureTemplateDetails() {
+		if (!this.templateDetailsCache) {
+			if (!this.state.templateName || this.state.templateName.trim() === '') {
+				throw new Error('Template name missing. Expected a concrete template like "base-store".');
+			}
+			this.logger.info(`Loading template details for: ${this.state.templateName}`);
+			const results = await BaseSandboxService.getTemplateDetails(this.state.templateName);
+			if (!results.success || !results.templateDetails) {
+				throw new Error(`Failed to get template details for: ${this.state.templateName}`);
+			}
             
             const templateDetails = results.templateDetails;
             
@@ -186,18 +199,12 @@ export abstract class BaseCodingBehavior<TState extends BaseProjectState>
         return this.templateDetailsCache;
     }
 
-    public getTemplateDetails(): TemplateDetails {
-        if (!this.templateDetailsCache) {
-            // Synthesize a minimal scratch template when starting from scratch
-            if (this.state.templateName === 'scratch') {
-                this.templateDetailsCache = createScratchTemplateDetails();
-                return this.templateDetailsCache;
-            }
-            this.ensureTemplateDetails();
-            throw new Error('Template details not loaded. Call ensureTemplateDetails() first.');
-        }
-        return this.templateDetailsCache;
-    }
+	public getTemplateDetails(): TemplateDetails {
+		if (!this.templateDetailsCache) {
+			throw new Error('Template details not loaded. Call ensureTemplateDetails() first.');
+		}
+		return this.templateDetailsCache;
+	}
 
     protected isPreviewable(): boolean {
         // If there are 'package.json', and 'wrangler.jsonc' files, then it is previewable
@@ -764,7 +771,7 @@ export abstract class BaseCodingBehavior<TState extends BaseProjectState>
 
         // Agentic: allow initializing plan if not set yet (first-time plan initialization only)
         if (this.isAgenticState(this.state)) {
-            const currentPlan = this.state.blueprint?.plan;
+            const currentPlan = (this.state.blueprint as AgenticBlueprint | undefined)?.plan;
             const patchPlan = 'plan' in patch ? patch.plan : undefined;
             if (Array.isArray(patchPlan) && (!Array.isArray(currentPlan) || currentPlan.length === 0)) {
                 filtered['plan'] = patchPlan;
@@ -1076,10 +1083,26 @@ export abstract class BaseCodingBehavior<TState extends BaseProjectState>
     public getBrowserPreviewURL(): string {
         const token = this.getOrCreateFileServingToken();
         const agentId = this.getAgentId();
-        const previewDomain = isDev(this.env) ? 'localhost:5173' : getPreviewDomain(this.env);
+        const previewDomain = this.state.hostname || (isDev(this.env) ? 'localhost:5173' : getPreviewDomain(this.env));
 
         // Format: b-{agentid}-{token}.{previewDomain}
         return `${getProtocolForHost(previewDomain)}://b-${agentId}-${token}.${previewDomain}`;
+    }
+
+    public getPreviewUrlCache(): string {
+        if (this.previewUrlCache) {
+            return this.previewUrlCache;
+        }
+
+        try {
+            if (this.getTemplateDetails()?.renderMode === 'browser') {
+                return this.getBrowserPreviewURL();
+            }
+        } catch {
+            // Template details may not be available yet. Return empty cache in that case.
+        }
+
+        return '';
     }
 
     // A wrapper for LLM tool to deploy to sandbox
@@ -1105,6 +1128,9 @@ export abstract class BaseCodingBehavior<TState extends BaseProjectState>
             const result: PreviewType = {
                 previewURL: this.getBrowserPreviewURL()
             }
+            if (result.previewURL) {
+                this.previewUrlCache = result.previewURL;
+            }
             this.logger.info('Deployed to browser native sandbox');
             this.broadcast(WebSocketMessageResponses.DEPLOYMENT_COMPLETED, result);
             return result;
@@ -1124,6 +1150,9 @@ export abstract class BaseCodingBehavior<TState extends BaseProjectState>
                     this.broadcast(WebSocketMessageResponses.DEPLOYMENT_STARTED, data);
                 },
                 onCompleted: (data) => {
+                    if (data.previewURL) {
+                        this.previewUrlCache = data.previewURL;
+                    }
                     this.broadcast(WebSocketMessageResponses.DEPLOYMENT_COMPLETED, data);
                 },
                 onError: (data) => {
@@ -1135,6 +1164,10 @@ export abstract class BaseCodingBehavior<TState extends BaseProjectState>
                 }
             }
         );
+
+        if (result?.previewURL) {
+            this.previewUrlCache = result.previewURL;
+        }
 
         return result;
     }

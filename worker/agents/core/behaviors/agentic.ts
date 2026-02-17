@@ -58,6 +58,9 @@ export class AgenticCodingBehavior extends BaseCodingBehavior<AgenticState> impl
         await super.initialize(initArgs);
 
         const { query, hostname, inferenceContext, templateInfo, sandboxSessionId } = initArgs;
+        if (!inferenceContext.metadata) {
+            throw new Error('Missing inference metadata for agentic initialization');
+        }
 
         const packageJson = templateInfo?.templateDetails?.allFiles['package.json'];
 
@@ -70,8 +73,8 @@ export class AgenticCodingBehavior extends BaseCodingBehavior<AgenticState> impl
         
         this.logger.info('Generated project name', { projectName });
         
-        this.setState({
-            ...this.state,
+	        this.setState({
+	            ...this.state,
             projectName,
             query,
             blueprint: {
@@ -82,12 +85,13 @@ export class AgenticCodingBehavior extends BaseCodingBehavior<AgenticState> impl
                 frameworks: [],
                 plan: []
             },
-            templateName: templateInfo?.templateDetails?.name || (this.projectType === 'general' ? 'scratch' : ''),
-            sandboxInstanceId: undefined,
-            commandsHistory: [],
-            lastPackageJson: packageJson,
-            sessionId: sandboxSessionId!,
-            hostname,
+	            // For app projects we always start from the base template. General projects can remain "scratch".
+	            templateName: templateInfo?.templateDetails?.name || (this.projectType === 'general' ? 'scratch' : 'base-store'),
+	            sandboxInstanceId: undefined,
+	            commandsHistory: [],
+	            lastPackageJson: packageJson,
+	            sessionId: sandboxSessionId!,
+	            hostname,
             metadata: inferenceContext.metadata,
             projectType: this.projectType,
             behaviorType: 'agentic'

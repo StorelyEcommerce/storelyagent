@@ -1,11 +1,10 @@
 import { FileTreeNode, RuntimeError, StaticAnalysisResponse, TemplateDetails } from "../services/sandbox/sandboxTypes";
 import { TemplateRegistry } from "./inferutils/schemaFormatters";
 import z from 'zod';
-import { Blueprint, BlueprintSchemaLite, DesignDNA, DesignDNASchema, FileOutputType, PhaseConceptLiteSchema, PhaseConceptSchema, PhaseConceptType, TemplateSelection } from "./schemas";
+import { AgenticBlueprint, AgenticBlueprintSchema, Blueprint, BlueprintSchemaLite, DesignDNA, DesignDNASchema, FileOutputType, PhasicBlueprint, PhaseConceptLiteSchema, PhaseConceptSchema, PhaseConceptType, TemplateSelection } from "./schemas";
 import { IssueReport } from "./domain/values/IssueReport";
 import { FileState, MAX_PHASES } from "./core/state";
 import { CODE_SERIALIZERS, CodeSerializerType } from "./utils/codeSerializers";
-import { getCodebaseContext } from "./utils/codebaseContext";
 
 export const PROMPT_UTILS = {
     /**
@@ -292,6 +291,15 @@ useEffect(() => { init(config); }, [config]); // stable reference
 6. Derived data: compute with useMemo OUTSIDE selector
 
 </REACT_RENDER_LOOP_PREVENTION>`,
+
+    REACT_RENDER_LOOP_PREVENTION_LITE: `
+<REACT_RENDER_LOOP_PREVENTION_LITE>
+- Never call setState during render.
+- useEffect must always have a dependency array and guarded updates.
+- Zustand selectors must return a single primitive/direct field (no object/array selectors).
+- Stabilize object/array dependencies with useMemo/useCallback.
+</REACT_RENDER_LOOP_PREVENTION_LITE>
+`,
 
     COMMON_PITFALLS: `<AVOID COMMON PITFALLS>
     **TOP 6 MISSION-CRITICAL RULES (FAILURE WILL CRASH THE APP):**
@@ -831,22 +839,22 @@ export const STRATEGIES_UTILS = {
     INITIAL_PHASE_GUIDELINES: `**First Phase: Stunning Frontend Foundation & Visual Excellence**
         * **🏠 HOME PAGE CUSTOMIZATION (CRITICAL):** The home page MUST reflect the user's store concept:
             - **Branded Hero Section:** Customize headline and subheadline to match the store's niche (NOT generic "Shop with Confidence")
-            - **MINIMALIST CSS DESIGN:** Use CSS-only visuals - gradients (bg-gradient-to-r), shadows, borders, and solid colors. Avoid external images or logos.
+            - **PROMPT-ALIGNED CSS DESIGN:** Use CSS-only visuals that match the requested style direction (e.g., minimal, editorial, bold, retro, organic) via gradients, shadows, borders, and solid colors. Avoid external images or logos.
             - **Color Scheme:** Apply colors that fit the store's brand and industry using Tailwind color utilities
             - **Value Proposition:** Communicate what makes this store unique through typography and layout
         * **🛍️ SAMPLE PRODUCT REQUIREMENT (CRITICAL):** Create exactly ONE product in seed.sql:
-            - **Name:** "Sample Product" (use this exact name)
+            - **Name:** A niche-relevant product name that reflects the user's store concept
             - **Description:** Brief, relevant to the store's niche
             - **Price:** Realistic for the store type (e.g., $29.99)
             - **Image:** Set imageUrl to NULL (templates use CSS placeholders)
             - **Visible on Shop Page:** The /products page MUST display this product
             - **No extra seed data:** Do NOT add any other sample products
             - **No seeded users/admins:** Leave user/admin tables empty; the store creator is the only initial user/admin
-        * **🎨 MINIMALIST VISUAL DESIGN FOUNDATION:** Establish clean, typography-focused visual foundation:
+        * **🎨 EXPRESSIVE VISUAL DESIGN FOUNDATION:** Establish a clear, prompt-specific visual identity:
             - **Design System Excellence:** Define beautiful color palettes, typography scales, and generous whitespace
             - **Component Library Mastery:** Leverage shadcn components to create stunning, cohesive interfaces
             - **Layout Architecture:** Build gorgeous navigation, headers, footers with perfect spacing and alignment
-            - **Typography-First Identity:** Let beautiful fonts, whitespace, and CSS accents define the brand (no external images/logos)
+            - **Style Fidelity:** Ensure typography, spacing, and section composition clearly reflect the user's requested vibe (no external images/logos)
         * **✨ UI COMPONENT EXCELLENCE:** Create components that users love to interact with:
             - **Interactive Polish:** Every button, form, and clickable element has beautiful hover states
             - **Micro-Interactions:** Subtle animations that provide delightful feedback
@@ -1036,7 +1044,9 @@ export function generalSystemPromptBuilder(
             const agenticBlueprint = params.blueprint as AgenticBlueprint;
             variables.blueprint = TemplateRegistry.markdown.serialize(agenticBlueprint, AgenticBlueprintSchema);
             variables.blueprintDependencies = agenticBlueprint.frameworks?.join(', ') ?? '';
-            variables.agenticPlan = agenticBlueprint.plan.map((step, i) => `${i + 1}. ${step}`).join('\n');
+            variables.agenticPlan = agenticBlueprint.plan
+                .map((step: string, i: number) => `${i + 1}. ${step}`)
+                .join('\n');
         }
     }
 
@@ -1095,82 +1105,63 @@ The following phases have been completed and implemented:
 </COMPLETED_PHASES>`
 
 export const USER_PROMPT_FORMATTER = {
-    PROJECT_CONTEXT: (phases: PhaseConceptType[], files: FileState[], fileTree: FileTreeNode, commandsHistory: string[], serializerType: CodeSerializerType = CodeSerializerType.SIMPLE) => {
-        let lastPhaseFilesDiff = '';
-        let phasesText = '';
-        try {
-            if (phases.length > 1) {
-                const lastPhase = phases[phases.length - 1];
-                if (lastPhase && lastPhase.files) {
-                    // Get last phase files diff only
-                    const fileMap = new Map<string, FileState>();
-                    files.forEach((file) => fileMap.set(file.filePath, file));
-                    const lastPhaseFiles = lastPhase.files.map((file) => fileMap.get(file.path)).filter((file) => file !== undefined);
-                    lastPhaseFilesDiff = lastPhaseFiles.map((file) => file.lastDiff).join('\n');
+	PROJECT_CONTEXT: (phases: PhaseConceptType[], files: FileState[], fileTree: FileTreeNode, commandsHistory: string[], serializerType: CodeSerializerType = CodeSerializerType.SIMPLE) => {
+		let lastPhaseFilesDiff = '';
+		let phasesText = '';
 
-                    // Set lastPhase = false for all phases but the last
-                    phases.forEach((phase) => {
-                        if (phase !== lastPhase) {
-                            phase.lastPhase = false;
-                        }
-                    });
-                }
+		try {
+			if (phases.length > 0) {
+				const lastPhase = phases[phases.length - 1];
 
-                // Split phases into older (redacted) and last
-                const olderPhases = phases.slice(0, -1);
-                
-                // Serialize older phases without files, recent phases with files
-                if (olderPhases.length > 0) {
-                    const olderPhasesLite = olderPhases.map(({ name, description }) => ({ name, description }));
-                    phasesText += TemplateRegistry.markdown.serialize({ phases: olderPhasesLite }, z.object({ phases: z.array(PhaseConceptLiteSchema) }));
-                }
-                phasesText += '\n\nLast Phase Implemented:\n' + TemplateRegistry.markdown.serialize(lastPhase, PhaseConceptSchema);
-                
-                const redactionNotice = olderPhases.length > 0 
-                    ? `**Note:** File details for the first ${olderPhases.length} phase(s) have been redacted to optimize context. Only the last phase includes complete file information.\n` 
-                    : '';
+				if (lastPhase?.files) {
+					const fileMap = new Map<string, FileState>();
+					files.forEach((file) => fileMap.set(file.filePath, file));
+					const lastPhaseFiles = lastPhase.files
+						.map((file) => fileMap.get(file.path))
+						.filter((file): file is FileState => Boolean(file));
+					lastPhaseFilesDiff = lastPhaseFiles.map((file) => file.lastDiff).join('\n');
+				}
 
-                phasesText = COMPLETED_PHASES_CONTEXT.replaceAll('{{phases}}', phasesText).replaceAll('{{redactionNotice}}', redactionNotice);
-            }
-        } catch (error) {
-            console.error('Error processing project context:', error);
-        }
+				const olderPhases = phases.slice(0, -1);
+				let serializedPhases = '';
+				if (olderPhases.length > 0) {
+					const olderPhasesLite = olderPhases.map(({ name, description }) => ({ name, description }));
+					serializedPhases += TemplateRegistry.markdown.serialize(
+						{ phases: olderPhasesLite },
+						z.object({ phases: z.array(PhaseConceptLiteSchema) })
+					);
+				}
+				if (lastPhase) {
+					if (serializedPhases.length > 0) {
+						serializedPhases += '\n\n';
+					}
+					serializedPhases += 'Last Phase Implemented:\n';
+					serializedPhases += TemplateRegistry.markdown.serialize(lastPhase, PhaseConceptSchema);
+				}
 
-        // TODO: Instead of just including diff for last phase, include last diff for each file along with information of which phase it was modified in
+				const redactionNotice = olderPhases.length > 0
+					? `**Note:** File details for the first ${olderPhases.length} phase(s) have been redacted to optimize context. Only the last phase includes complete file information.\n`
+					: '';
 
-        // Split phases into older (redacted) and recent (full) groups
-        const olderPhases = phases.slice(0, -recentPhasesCount);
-        const recentPhases = phases.slice(-recentPhasesCount);
+				phasesText = COMPLETED_PHASES_CONTEXT
+					.replaceAll('{{phases}}', serializedPhases)
+					.replaceAll('{{redactionNotice}}', redactionNotice);
+			}
+		} catch (error) {
+			console.error('Error processing project context:', error);
+		}
 
-        // Serialize older phases without files, recent phases with files
-        let phasesText = '';
-        if (olderPhases.length > 0) {
-            const olderPhasesLite = olderPhases.map(({ name, description }) => ({ name, description }));
-            phasesText += TemplateRegistry.markdown.serialize({ phases: olderPhasesLite }, z.object({ phases: z.array(PhaseConceptLiteSchema) }));
-            if (recentPhases.length > 0) {
-                phasesText += '\n\n';
-            }
-        }
-        if (recentPhases.length > 0) {
-            phasesText += TemplateRegistry.markdown.serialize({ phases: recentPhases }, z.object({ phases: z.array(PhaseConceptSchema) }));
-        }
+		const variables: Record<string, string> = {
+			phasesText,
+			files: PROMPT_UTILS.serializeFiles(files, serializerType),
+			fileTree: PROMPT_UTILS.serializeTreeNodes(fileTree),
+			lastDiffs: lastPhaseFilesDiff,
+			commandsHistory: commandsHistory.length > 0 ? `<COMMANDS HISTORY>\n\nThe following commands have been executed successfully in the project environment so far (These may not include the ones that are currently pending):\n\n${commandsHistory.join('\n')}\n\n</COMMANDS HISTORY>` : ''
+		};
 
-        const redactionNotice = olderPhases.length > 0
-            ? `**Note:** File details for the first ${olderPhases.length} phase(s) have been redacted to optimize context. Only the last ${recentPhasesCount} phase(s) include complete file information.\n`
-            : '';
-
-        const variables: Record<string, string> = {
-            phasesText: phasesText,
-            files: PROMPT_UTILS.serializeFiles(relevantFiles, serializerType),
-            fileTree: PROMPT_UTILS.serializeTreeNodes(fileTree),
-            lastDiffs: lastPhaseFilesDiff,
-            commandsHistory: commandsHistory.length > 0 ? `<COMMANDS HISTORY>\n\nThe following commands have been executed successfully in the project environment so far (These may not include the ones that are currently pending):\n\n${commandsHistory.join('\n')}\n\n</COMMANDS HISTORY>` : ''
-        };
-
-        const prompt = PROMPT_UTILS.replaceTemplateVariables(PROMPT_UTILS.PROJECT_CONTEXT, variables);
-
-        return PROMPT_UTILS.verifyPrompt(prompt);
-    },
+		const prompt = PROMPT_UTILS.replaceTemplateVariables(PROMPT_UTILS.PROJECT_CONTEXT, variables);
+		return PROMPT_UTILS.verifyPrompt(prompt);
+	},
 };
 
 const getStyleInstructions = (style: TemplateSelection['styleSelection']): string => {
@@ -1245,9 +1236,9 @@ Example Elements: Monochrome schemes, subtle animations, grid-based layouts.
 `
     }
     return `
-** Apply a gradient background or subtle textures to the hero section for depth and warmth.
-** Choose a modern sans-serif font like Inter, Sora, or DM Sans
-** Use visual contrast: white or light background, or very soft gradient + clean black text.
+** Derive a specific visual identity from the user's niche and tone (do not default to generic SaaS aesthetics).
+** Define typography pairing and section composition choices that are visibly distinctive.
+** Preserve strong readability and contrast while maintaining the chosen style direction.
     `
 };
 
@@ -1265,12 +1256,16 @@ Use the following artistic style:
 ${getStyleInstructions(style)}
 `;
 
-const ECOMM_INSTRUCTIONS = (): string => `
+const ECOMM_INSTRUCTIONS = (style: TemplateSelection['styleSelection']): string => `
 ** If there is no brand/product name specified, come up with a suitable name
 ** Include a prominent hero section with a headline, subheadline, and a clear call-to-action (CTA) button above the fold.
 ** Insert a product showcase section with high-quality images, descriptions, and prices.
 ** Provide a collapsible sidebar (desktop) or an expandable top bar (tablet/mobile) containing filters (category, price range slider, brand, color swatches), so users can refine results without leaving the page.
 ** Use a clean, modern layout with generous white space and a clear visual hierarchy
+** Keep the visual language strongly aligned to the selected style direction below.
+
+Use the following artistic style:
+${getStyleInstructions(style)}
 `;
 
 const DASHBOARD_INSTRUCTIONS = (): string => `
@@ -1288,7 +1283,7 @@ export const getUsecaseSpecificInstructions = (selectedTemplate: TemplateSelecti
         case 'SaaS Product Website':
             return SAAS_LANDING_INSTRUCTIONS(selectedTemplate.styleSelection);
         case 'E-Commerce':
-            return ECOMM_INSTRUCTIONS();
+            return ECOMM_INSTRUCTIONS(selectedTemplate.styleSelection);
         case 'Dashboard':
             return DASHBOARD_INSTRUCTIONS();
         default:

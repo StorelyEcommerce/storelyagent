@@ -22,7 +22,7 @@ export function getProviderInfo(modelValue?: string): ProviderInfo {
 	if (modelValue.includes('cerebras/')) {
 		return { name: 'Cerebras', color: 'bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400' };
 	}
-	if (modelValue.includes('[openrouter]')) {
+	if (modelValue.includes('[openrouter]') || modelValue.includes('openrouter/')) {
 		return { name: 'OpenRouter', color: 'bg-pink-100 text-pink-800 dark:bg-pink-900/20 dark:text-pink-400' };
 	}
 	if (modelValue.includes('openai/') || modelValue.includes('gpt') || modelValue.includes('o3') || modelValue.includes('o4')) {

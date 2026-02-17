@@ -46,24 +46,6 @@ function makeArgs(files: FileOutputType[]): PreDeploySafetyGateArgs {
 	};
 }
 
-function makeSeededRng(seed: number) {
-	let state = seed >>> 0;
-	return () => {
-		// LCG (deterministic, fast)
-		state = (1664525 * state + 1013904223) >>> 0;
-		return state / 0xffffffff;
-	};
-}
-
-function randomAscii(rng: () => number, length: number) {
-	const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_(){}[];,:.<>+-=*/\"\'\n\t ';
-	let out = '';
-	for (let i = 0; i < length; i++) {
-		out += chars[Math.floor(rng() * chars.length)];
-	}
-	return out;
-}
-
 describe('runPreDeploySafetyGate', () => {
 	let warnSpy: ReturnType<typeof vi.spyOn>;
 
@@ -157,7 +139,7 @@ describe('runPreDeploySafetyGate', () => {
 		expect(mocked.runMock).toHaveBeenCalledTimes(1);
 	});
 
-	it('never throws if RealtimeCodeFixer constructor throws', async () => {
+	it('throws if RealtimeCodeFixer constructor throws', async () => {
 		mocked.constructorShouldThrow = true;
 
 		const input = [
@@ -167,14 +149,14 @@ describe('runPreDeploySafetyGate', () => {
 			}),
 		];
 
-		const out = await runPreDeploySafetyGate(makeArgs(input));
-		expect(out).toHaveLength(1);
-		expect(out[0].filePath).toBe('src/App.tsx');
+		await expect(runPreDeploySafetyGate(makeArgs(input))).rejects.toThrow(
+			'Failed to initialize realtime code fixer: RealtimeCodeFixer constructor failed',
+		);
 		expect(mocked.runMock).not.toHaveBeenCalled();
 		expect(warnSpy).toHaveBeenCalled();
 	});
 
-	it('never throws if fixer run rejects; returns original', async () => {
+	it('throws if fixer run rejects', async () => {
 		mocked.runMock.mockRejectedValueOnce(new Error('fixer failed'));
 
 		const input = [
@@ -184,12 +166,10 @@ describe('runPreDeploySafetyGate', () => {
 			}),
 		];
 
-		const out = await runPreDeploySafetyGate(makeArgs(input));
-		expect(out[0].fileContents).toBe(input[0].fileContents);
-		expect(warnSpy).toHaveBeenCalled();
+		await expect(runPreDeploySafetyGate(makeArgs(input))).rejects.toThrow('fixer failed');
 	});
 
-	it('never throws if fixer run throws; returns original', async () => {
+	it('throws if fixer run throws', async () => {
 		mocked.runMock.mockImplementationOnce(() => {
 			throw new Error('fixer threw');
 		});
@@ -201,12 +181,10 @@ describe('runPreDeploySafetyGate', () => {
 			}),
 		];
 
-		const out = await runPreDeploySafetyGate(makeArgs(input));
-		expect(out[0].fileContents).toBe(input[0].fileContents);
-		expect(warnSpy).toHaveBeenCalled();
+		await expect(runPreDeploySafetyGate(makeArgs(input))).rejects.toThrow('fixer threw');
 	});
 
-	it('never throws on invalid syntax; still returns files', async () => {
+	it('throws on invalid syntax', async () => {
 		mocked.runMock.mockImplementation(async (file: FileOutputType) => file);
 
 		const input = [
@@ -216,44 +194,20 @@ describe('runPreDeploySafetyGate', () => {
 			}),
 		];
 
-		await expect(runPreDeploySafetyGate(makeArgs(input))).resolves.toHaveLength(1);
+		await expect(runPreDeploySafetyGate(makeArgs(input))).rejects.toThrow(
+			'Failed to parse file during deterministic selector rewrite',
+		);
 		expect(warnSpy).toHaveBeenCalled();
-	});
-
-	it('fuzz: never throws across random file contents', async () => {
-		mocked.runMock.mockImplementation(async (file: FileOutputType) => file);
-
-		const rng = makeSeededRng(123456);
-		const files: FileOutputType[] = [];
-		for (let i = 0; i < 200; i++) {
-			files.push(
-				makeFile({
-					filePath: `src/Fuzz${i}.tsx`,
-					fileContents: randomAscii(rng, 200),
-				}),
-			);
-		}
-
-		const out = await runPreDeploySafetyGate(makeArgs(files));
-		expect(out).toHaveLength(200);
 	});
 });
 
 describe('detectPreDeploySafetyFindings', () => {
-	it('never throws on random input', () => {
+	it('throws on invalid input', () => {
 		const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
-		expect(() => detectPreDeploySafetyFindings('<<< not ts >>>')).not.toThrow();
-		const out = detectPreDeploySafetyFindings('<<< not ts >>>');
-		expect(Array.isArray(out)).toBe(true);
-		// Parser should fail and log
+		expect(() => detectPreDeploySafetyFindings('<<< not ts >>>')).toThrow(
+			'Failed to parse file for safety checks',
+		);
 		expect(spy).toHaveBeenCalled();
 		spy.mockRestore();
-	});
-
-	it('fuzz: never throws across random strings', () => {
-		const rng = makeSeededRng(424242);
-		for (let i = 0; i < 200; i++) {
-			expect(() => detectPreDeploySafetyFindings(randomAscii(rng, 200))).not.toThrow();
-		}
 	});
 });

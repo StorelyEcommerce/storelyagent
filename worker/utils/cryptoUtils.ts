@@ -30,8 +30,12 @@ export function base64url(buffer: Uint8Array): string {
 export function generatePortToken(): string {
     const array = new Uint8Array(12); // 12 bytes = 16 base64url chars
     crypto.getRandomValues(array);
-    // Lowercase since hostnames are case-insensitive (RFC 1035)
-    return base64url(array).toLowerCase().replace(/-/g, 'x');
+    // Host labels should stay DNS-safe: avoid '-' and '_' from base64url output.
+    // Keep one-char substitutions so token length and entropy profile remain stable.
+    return base64url(array)
+        .toLowerCase()
+        .replace(/-/g, 'x')
+        .replace(/_/g, 'y');
 }
 
 export async function sha256Hash(text: string): Promise<string> {

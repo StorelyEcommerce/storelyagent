@@ -2,8 +2,8 @@
  * Centralized API types - imports and re-exports types from worker
  * This file serves as the single source of truth for frontend-worker API communication
  */
-import { SessionResponse } from 'worker/utils/authUtils';
-import { AuthUser } from './api-types';
+import type { SessionResponse } from 'worker/utils/authUtils';
+import type { AuthUser } from 'worker/types/auth-types';
 
 export type { SecretTemplate } from 'worker/types/secretsTemplates';
 
@@ -73,6 +73,8 @@ export type {
 
 export {
   DEFAULT_FEATURE_DEFINITIONS,
+  isProjectType,
+  normalizeProjectType,
   getBehaviorTypeForProject,
 } from 'worker/agents/core/features';
 
@@ -143,6 +145,8 @@ export type {
   AgentConnectionData,
 } from 'worker/api/controllers/agent/types';
 
+export { MAX_AGENT_QUERY_LENGTH } from 'worker/api/controllers/agent/types';
+
 // Template Types
 export type {
   TemplateDetails,
@@ -152,7 +156,9 @@ export type {
 export type {
   WebSocketMessage,
   WebSocketMessageData,
-  CodeFixEdits
+  CodeFixEdits,
+  AgentDisplayConfig,
+  ModelConfigsInfo
 } from 'worker/api/websocketTypes';
 
 // Database/Schema Types commonly used in frontend
@@ -181,7 +187,9 @@ export type {
 } from 'worker/agents/schemas';
 
 export type {
-  CodeGenState
+  CodeGenState,
+  AgentState,
+  PhasicState
 } from 'worker/agents/core/state';
 
 export type {
@@ -197,6 +205,27 @@ export type {
   RuntimeError,
   StaticAnalysisResponse
 } from 'worker/services/sandbox/sandboxTypes';
+
+export type {
+  KdfAlgorithm,
+  SecretMetadata,
+  VaultStatusResponse,
+  VaultConfigResponse
+} from 'worker/services/secrets/vault-types';
+
+export type {
+  UserSecretsListData,
+  UserSecretStoreData,
+  UserSecretDeleteData
+} from 'worker/api/controllers/user-secrets/types';
+
+export interface SecretStoreData {
+  secret: {
+    isActive?: boolean;
+    [key: string]: unknown;
+  };
+  message: string;
+}
 
 // Config/Inference Types
 export type {

@@ -1,10 +1,11 @@
 import { WebSocketMessageResponses } from '../../../agents/constants';
 import { BaseController } from '../baseController';
 import { generateId } from '../../../utils/idGenerator';
-import { AgentState } from '../../../agents/core/state';
+import { AgentState, CodeGenState, CurrentDevState } from '../../../agents/core/state';
 import { BehaviorType, ProjectType } from '../../../agents/core/types';
 import { getAgentStub, getTemplateForQuery } from '../../../agents';
 import { AgentConnectionData, AgentPreviewResponse, AgentCloudflareDeployResponse, CodeGenArgs } from './types';
+import { MAX_AGENT_QUERY_LENGTH } from './types';
 import { ApiResponse, ControllerResponse } from '../types';
 import { RouteContext } from '../../types/route-context';
 import { AppService, ModelConfigService } from '../../../database';
@@ -19,9 +20,9 @@ import { getTemplateImportantFiles } from 'worker/services/sandbox/utils';
 import { checkStoreInfoForInitialQuery } from '../../../agents/operations/UserConversationProcessor';
 import { checkGuardrail, getGuardrailRejectionMessage } from '../../../agents/operations/Guardrail';
 import { InferenceContext } from '../../../agents/inferutils/config.types';
-import { AppService } from '../../../database';
 import type { Blueprint } from '../../../agents/schemas';
-import type { SmartCodeGeneratorAgent } from '../../../agents/core/smartGeneratorAgent';
+import type { CodeGeneratorAgent } from '../../../agents/core/codingAgent';
+import { SecurityError, SecurityErrorType } from 'shared/types/errors';
 
 const defaultCodeGenArgs: Partial<CodeGenArgs> = {
     language: 'typescript',
@@ -65,6 +66,9 @@ export class CodingAgentController extends BaseController {
             }
 
             const query = body.query;
+            const behaviorType = resolveBehaviorType(body);
+            const projectType = resolveProjectType(body);
+            const finalProjectType: ProjectType = projectType === 'auto' ? 'app' : projectType;
             if (typeof query !== 'string' || query.trim().length === 0) {
                 return CodingAgentController.createErrorResponse('Missing "query" field in request body', 400);
             }
@@ -131,23 +135,25 @@ export class CodingAgentController extends BaseController {
             const modelConfigService = new ModelConfigService(env);
 
             // Fetch all user model configs, api keys and agent instance at once
-            const [userConfigsRecord, agentInstance] = await Promise.all([
+            const [userConfigsRecord, initialAgentInstance] = await Promise.all([
                 modelConfigService.getUserModelConfigs(user.id),
                 getAgentStub(env, agentId)
             ]);
 
             // Convert Record to Map and extract only ModelConfig properties
-            const userModelConfigs = new Map();
+            const userModelConfigs: Record<string, ModelConfig> = {};
             for (const [actionKey, mergedConfig] of Object.entries(userConfigsRecord)) {
                 if (mergedConfig.isUserOverride) {
                     const { isUserOverride, userConfigId, ...modelConfig } = mergedConfig;
-                    userModelConfigs[actionKey] = modelConfig;
+                    userModelConfigs[actionKey] = modelConfig as ModelConfig;
                 }
             }
 
             const runtimeOverrides = credentialsToRuntimeOverrides(body.credentials);
 
-            const inferenceContext = {
+            const inferenceContext: InferenceContext = {
+                agentId,
+                userId: user.id,
                 metadata: {
                     agentId: agentId,
                     userId: user.id,
@@ -180,7 +186,7 @@ export class CodingAgentController extends BaseController {
                 env,
                 inferenceContext,
                 agentId,
-                agentInstance,
+                initialAgentInstance,
                 user,
                 body,
                 hostname,
@@ -197,7 +203,7 @@ export class CodingAgentController extends BaseController {
 
             // If we proceed with initialization, NOW we select the template
             // (we have the complete query with store info)
-            const { templateDetails, selection } = await getTemplateForQuery(env, inferenceContext, query, body.images, this.logger);
+            const { templateDetails, selection } = await getTemplateForQuery(env, inferenceContext, query, uploadedImages, this.logger);
 
             writer.write({
                 message: 'Code generation started',
@@ -308,7 +314,7 @@ export class CodingAgentController extends BaseController {
                 return CodingAgentController.createErrorResponse('Missing user', 401);
             }
 
-            this.logger.info(`WebSocket connection request for chat: ${chatId}`);
+            this.logger.info(`WebSocket connection request for chat: ${agentId}`);
 
             // Log request details for debugging
             const headers: Record<string, string> = {};
@@ -318,14 +324,14 @@ export class CodingAgentController extends BaseController {
             this.logger.info('WebSocket request details', {
                 headers,
                 url: request.url,
-                chatId
+                chatId: agentId
             });
 
             try {
                 // Get the agent instance to handle the WebSocket connection
-                const agentInstance = await getAgentStub(env, chatId);
+                const agentInstance = await getAgentStub(env, agentId);
 
-                this.logger.info(`Successfully got agent instance for chat: ${chatId}`);
+                this.logger.info(`Successfully got agent instance for chat: ${agentId}`);
 
                 // Let the agent handle the WebSocket connection directly
                 return agentInstance.fetch(request);
@@ -409,7 +415,7 @@ export class CodingAgentController extends BaseController {
         env: Env,
         inferenceContext: InferenceContext,
         agentId: string,
-        agentInstance: DurableObjectStub<SmartCodeGeneratorAgent>,
+        agentInstance: DurableObjectStub<CodeGeneratorAgent>,
         user: { id: string },
         body: CodeGenArgs,
         hostname: string,
@@ -452,7 +458,8 @@ export class CodingAgentController extends BaseController {
             message: 'Waiting for store information',
             agentId: agentId,
             websocketUrl: websocketUrl,
-            storeInfoPending: true
+            storeInfoPending: true,
+            storeInfoMessage: askMessage
         });
 
         // Set up minimal agent state for WebSocket connections
@@ -460,25 +467,31 @@ export class CodingAgentController extends BaseController {
         // Store init args for later initialization (without templateInfo and onBlueprintChunk callback)
         // We'll store these in state so they persist across WebSocket connections
         // Note: onBlueprintChunk callback can't be stored in state, but we'll reconstruct it during initialize()
-        const minimalState: CodeGenState = {
-            blueprint: {} as Blueprint,
-            projectName: '',
-            query: query,
-            generatedFilesMap: {},
-            generatedPhases: [],
-            templateName: '', // Empty - template not selected yet
-            sandboxInstanceId: undefined,
-            shouldBeGenerating: false,
-            mvpGenerated: false,
-            reviewingInitiated: false,
-            agentMode: body.agentMode || defaultCodeGenArgs.agentMode,
+        const resolvedProjectType = resolveProjectType(body);
+	        const minimalState: AgentState = {
+	            behaviorType: resolveBehaviorType(body),
+	            projectType: resolvedProjectType === 'auto' ? 'app' : resolvedProjectType,
+	            blueprint: {} as Blueprint,
+	            projectName: '',
+	            query: query,
+	            generatedFilesMap: {},
+	            generatedPhases: [],
+	            // Default to the only supported template in local/dev to avoid ".zip" lookups during
+	            // store-info collection (agent can still overwrite this later during initialization).
+	            templateName: 'base-store',
+	            sandboxInstanceId: undefined,
+	            shouldBeGenerating: false,
+	            mvpGenerated: false,
+	            reviewingInitiated: false,
+	            agentMode: body.agentMode ?? 'deterministic',
             sessionId: '',
             hostname: hostname,
             phasesCounter: 12,
             pendingUserInputs: [],
-            currentDevState: 0, // CurrentDevState.IDLE
+            currentDevState: CurrentDevState.IDLE,
             conversationMessages: [],
             projectUpdatesAccumulator: [],
+            metadata: inferenceContext.metadata ?? { agentId, userId: user.id },
             inferenceContext: inferenceContext,
             lastDeepDebugTranscript: null,
             isDeepDebugging: false,
@@ -669,7 +682,11 @@ export class CodingAgentController extends BaseController {
                     return CodingAgentController.createErrorResponse('No generated files found', 404);
                 }
 
-                const files = Object.values(state.generatedFilesMap).map(file => ({
+                const files = Object.values(state.generatedFilesMap as Record<string, {
+                    filePath: string;
+                    fileContents: string;
+                    filePurpose?: string;
+                }>).map(file => ({
                     filePath: file.filePath,
                     fileContents: file.fileContents,
                     filePurpose: file.filePurpose || ''

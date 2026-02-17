@@ -67,8 +67,8 @@ OR
 */
 
 
-const DEFAULT_PRIMARY_MODEL = AIModels.OPENAI_CODEX_5_3;
-const DEFAULT_FALLBACK_MODEL = AIModels.OPENAI_5_2;
+const DEFAULT_PRIMARY_MODEL = AIModels.OPENROUTER_MINIMAX_M2_5;
+const DEFAULT_FALLBACK_MODEL = AIModels.OPENROUTER_MINIMAX_M2_1;
 
 export const AGENT_CONFIG: AgentConfig = {
     templateSelection: {
@@ -96,6 +96,13 @@ export const AGENT_CONFIG: AgentConfig = {
         reasoning_effort: 'low',
         max_tokens: 32000,
         temperature: 0.85,
+        fallbackModel: DEFAULT_FALLBACK_MODEL,
+    },
+    agenticProjectBuilder: {
+        name: DEFAULT_PRIMARY_MODEL,
+        reasoning_effort: 'medium',
+        max_tokens: 64000,
+        temperature: 0.7,
         fallbackModel: DEFAULT_FALLBACK_MODEL,
     },
     firstPhaseImplementation: {
@@ -187,3 +194,10 @@ export function isValidAIModel(model: string): model is AIModels {
 export function getValidAIModelsArray(): readonly AIModels[] {
     return ALL_AI_MODELS;
 }
+
+export type AgentConstraint = {
+	enabled: boolean;
+	allowedModels: Set<AIModels>;
+};
+
+export const AGENT_CONSTRAINTS = new Map<keyof AgentConfig, AgentConstraint>();

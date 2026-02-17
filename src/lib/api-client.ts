@@ -67,6 +67,10 @@ import type {
 	AgentPreviewResponse,
 	AgentCloudflareDeployResponse,
 	PlatformStatusData,
+	CapabilitiesData,
+	VaultStatusResponse,
+	VaultConfigResponse,
+	SecretStoreData,
 	RateLimitError
 } from '@/api-types';
 import {
@@ -230,6 +234,13 @@ class ApiClient {
 		await this.fetchCsrfToken();
 	}
 
+	/**
+	 * Clear the locally cached CSRF token so the next write fetches a fresh token.
+	 */
+	invalidateCsrfTokenCache(): void {
+		this.csrfTokenInfo = null;
+	}
+
 
 	/**
 	 * Check if CSRF token is expired
@@ -297,6 +308,43 @@ class ApiClient {
 		return true;
 	}
 
+	/**
+	 * Parse API responses defensively. Some local dev failures can return HTML/non-JSON.
+	 */
+	private async parseApiResponse<T>(response: Response): Promise<ApiResponse<T>> {
+		if (response.status === 204) {
+			return { success: true } as ApiResponse<T>;
+		}
+
+		const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
+		if (contentType.includes('application/json')) {
+			return await response.json() as ApiResponse<T>;
+		}
+
+		const rawBody = await response.text();
+		if (!rawBody) {
+			return {
+				success: response.ok,
+				message: response.ok
+					? 'Request completed with an empty response body'
+					: response.statusText || 'Request failed',
+			} as ApiResponse<T>;
+		}
+
+		try {
+			return JSON.parse(rawBody) as ApiResponse<T>;
+		} catch {
+			return {
+				success: false,
+				error: {
+					name: 'ParseError',
+					message: 'Received non-JSON response from API',
+				},
+				message: rawBody.slice(0, 300),
+			} as ApiResponse<T>;
+		}
+	}
+
 	private async request<T>(
 		endpoint: string,
 		options: RequestOptions = {},
@@ -357,9 +405,17 @@ class ApiClient {
 				return { response, data: null };
 			}
 
-			const data = await response.json() as ApiResponse<T>;
+			const data = await this.parseApiResponse<T>(response);
 
 			if (!response.ok) {
+				if (response.status === 403 && !isRetry) {
+					const combinedErrorText = `${data.error?.message ?? ''} ${data.message ?? ''}`.toLowerCase();
+					if (combinedErrorText.includes('csrf')) {
+						this.csrfTokenInfo = null;
+						return this.requestRaw(endpoint, options, true, noToast);
+					}
+				}
+
 				if (
 					response.status === 401 &&
 					globalAuthModalTrigger &&
@@ -375,25 +431,24 @@ class ApiClient {
 					if (!noToast) {
 						toast.error(errorData.message);
 					}
-					switch (errorData.type) {
-						case SecurityErrorType.CSRF_VIOLATION:
-							// Handle CSRF failures with retry
-							if (response.status === 403 && !isRetry) {
-								// Clear expired token and retry with fresh one
-								this.csrfTokenInfo = null;
-								return this.requestRaw(endpoint, options, true);
-							}
-							break;
-						case SecurityErrorType.RATE_LIMITED:
-							// Handle rate limiting
-							console.log('Rate limited', errorData);
+						switch (errorData.type) {
+							case SecurityErrorType.CSRF_VIOLATION:
+								// Handle CSRF failures with retry
+								if (response.status === 403 && !isRetry) {
+									// Clear expired token and retry with fresh one
+									this.csrfTokenInfo = null;
+									return this.requestRaw(endpoint, options, true, noToast);
+								}
+								break;
+							case SecurityErrorType.RATE_LIMITED:
+								// Handle rate limiting
+								console.log('Rate limited', errorData);
 							throw RateLimitExceededError.fromRateLimitError(errorData as unknown as RateLimitError);
-						default:
-							// Security error
-							throw new SecurityError(errorData.type, errorData.message);
+							default:
+								// Security error
+								throw new SecurityError(errorData.type, errorData.message);
+						}
 					}
-				}
-				console.log("Came here");
 
 				throw new ApiError(
 					response.status,
@@ -989,6 +1044,52 @@ class ApiClient {
 		});
 	}
 
+	async getAllSecrets(): Promise<ApiResponse<{
+		secrets: Array<{
+			id: string;
+			name: string;
+			provider: string;
+			keyPreview: string;
+			secretType: string;
+			isActive?: boolean;
+			lastUsed?: string | number | null;
+			createdAt?: string | number | null;
+		}>;
+	}>> {
+		return this.request<{
+			secrets: Array<{
+				id: string;
+				name: string;
+				provider: string;
+				keyPreview: string;
+				secretType: string;
+				isActive?: boolean;
+				lastUsed?: string | number | null;
+				createdAt?: string | number | null;
+			}>;
+		}>('/api/secrets');
+	}
+
+	async storeSecret(data: {
+		templateId?: string;
+		name?: string;
+		envVarName?: string;
+		value: string;
+		description?: string;
+		environment?: string;
+	}): Promise<ApiResponse<SecretStoreData>> {
+		return this.request<SecretStoreData>('/api/secrets', {
+			method: 'POST',
+			body: data,
+		});
+	}
+
+	async deleteSecret(secretId: string): Promise<ApiResponse<{ message: string }>> {
+		return this.request<{ message: string }>(`/api/secrets/${secretId}`, {
+			method: 'DELETE',
+		});
+	}
+
 	/**
 	 * Toggle secret active status
 	 */
@@ -1001,58 +1102,6 @@ class ApiClient {
 				method: 'PATCH',
 			},
 		);
-	}
-
-	/**
-	 * Get secret templates
-	 */
-	async getSecretTemplates(): Promise<ApiResponse<SecretTemplatesData>> {
-		return this.request<SecretTemplatesData>('/api/secrets/templates');
-	}
-
-	// ===============================
-	// Stripe Connect API Methods
-	// ===============================
-
-	/**
-	 * Get Stripe Connect status for the current user
-	 */
-	async getStripeConnectStatus(): Promise<ApiResponse<StripeConnectStatusData>> {
-		return this.request<StripeConnectStatusData>('/api/stripe/connect/status');
-	}
-
-	/**
-	 * Initiate Stripe Connect onboarding - returns URL to redirect user to
-	 */
-	async initiateStripeConnect(): Promise<ApiResponse<StripeConnectInitiateData>> {
-		return this.request<StripeConnectInitiateData>('/api/stripe/connect/initiate', {
-			method: 'POST',
-		});
-	}
-
-	/**
-	 * Refresh Stripe Connect status after returning from Stripe onboarding
-	 */
-	async refreshStripeConnectStatus(): Promise<ApiResponse<StripeConnectStatusData>> {
-		return this.request<StripeConnectStatusData>('/api/stripe/connect/refresh', {
-			method: 'POST',
-		});
-	}
-
-	/**
-	 * Get Express Dashboard link for connected Stripe account
-	 */
-	async getStripeDashboardLink(): Promise<ApiResponse<StripeConnectDashboardData>> {
-		return this.request<StripeConnectDashboardData>('/api/stripe/connect/dashboard');
-	}
-
-	/**
-	 * Disconnect Stripe account
-	 */
-	async disconnectStripe(): Promise<ApiResponse<StripeConnectDisconnectData>> {
-		return this.request<StripeConnectDisconnectData>('/api/stripe/connect', {
-			method: 'DELETE',
-		});
 	}
 
 	/**

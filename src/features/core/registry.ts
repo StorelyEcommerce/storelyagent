@@ -41,15 +41,32 @@ class FeatureRegistry {
 	 * Update feature definitions from backend capabilities response
 	 */
 	updateFromCapabilities(definitions: FeatureDefinition[]): void {
+		if (!Array.isArray(definitions)) {
+			console.warn('[FeatureRegistry] Invalid capabilities payload: features is not an array');
+			return;
+		}
+
 		for (const def of definitions) {
+			if (!def?.id) {
+				console.warn('[FeatureRegistry] Skipping invalid feature definition in capabilities payload');
+				continue;
+			}
+
 			const existing = this.features.get(def.id);
 			if (!existing) continue;
 
 			const hadCustomHeaderActions =
-				existing.definition.capabilities.hasCustomHeaderActions;
-			existing.definition = def;
+				existing.definition.capabilities?.hasCustomHeaderActions ?? false;
+			const mergedDefinition: FeatureDefinition = {
+				...existing.definition,
+				...def,
+				capabilities: def.capabilities ?? existing.definition.capabilities,
+			};
+			existing.definition = mergedDefinition;
 
-			if (hadCustomHeaderActions !== def.capabilities.hasCustomHeaderActions) {
+			const hasCustomHeaderActions =
+				mergedDefinition.capabilities?.hasCustomHeaderActions ?? false;
+			if (hadCustomHeaderActions !== hasCustomHeaderActions) {
 				this.lazyHeaderActionsComponents.delete(def.id);
 			}
 		}
@@ -162,7 +179,9 @@ class FeatureRegistry {
 		const feature = this.features.get(id);
 		if (!feature) return null;
 
-		if (!feature.definition.capabilities.hasCustomHeaderActions) {
+		const hasCustomHeaderActions =
+			feature.definition.capabilities?.hasCustomHeaderActions ?? false;
+		if (!hasCustomHeaderActions) {
 			this.lazyHeaderActionsComponents.set(id, null);
 			return null;
 		}
@@ -187,7 +206,7 @@ class FeatureRegistry {
 	 * Get capabilities for a feature
 	 */
 	getCapabilities(id: ProjectType) {
-		return this.features.get(id)?.definition.capabilities ?? null;
+		return this.features.get(id)?.definition?.capabilities ?? null;
 	}
 
 	/**

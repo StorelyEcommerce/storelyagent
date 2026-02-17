@@ -3,14 +3,6 @@ import React from 'react';
 
 import App from './App';
 import Home from './routes/home';
-import Chat from './routes/chat/chat';
-import Profile from './routes/profile';
-import Settings from './routes/settings/index';
-import AppsPage from './routes/apps';
-import AppView from './routes/app';
-import DiscoverPage from './routes/discover';
-import AdminDashboard from './routes/admin';
-import DocsPage from './routes/docs';
 import { ProtectedRoute } from './routes/protected-route';
 
 const routes = [
@@ -24,35 +16,79 @@ const routes = [
 			},
 			{
 				path: 'chat/:chatId',
-				Component: Chat,
+				lazy: async () => {
+					const { default: Chat } = await import('./routes/chat/chat');
+					return { Component: Chat };
+				},
 			},
 			{
 				path: 'profile',
-				element: React.createElement(ProtectedRoute, { children: React.createElement(Profile) }),
+				lazy: async () => {
+					const { default: Profile } = await import('./routes/profile');
+					return {
+						Component: () =>
+							React.createElement(ProtectedRoute, {
+								children: React.createElement(Profile),
+							}),
+					};
+				},
 			},
 			{
 				path: 'settings',
-				element: React.createElement(ProtectedRoute, { children: React.createElement(Settings) }),
+				lazy: async () => {
+					const { default: Settings } = await import('./routes/settings/index');
+					return {
+						Component: () =>
+							React.createElement(ProtectedRoute, {
+								children: React.createElement(Settings),
+							}),
+					};
+				},
 			},
 			{
 				path: 'apps',
-				element: React.createElement(ProtectedRoute, { children: React.createElement(AppsPage) }),
+				lazy: async () => {
+					const { default: AppsPage } = await import('./routes/apps');
+					return {
+						Component: () =>
+							React.createElement(ProtectedRoute, {
+								children: React.createElement(AppsPage),
+							}),
+					};
+				},
 			},
 			{
 				path: 'app/:id',
-				Component: AppView,
+				lazy: async () => {
+					const { default: AppView } = await import('./routes/app');
+					return { Component: AppView };
+				},
 			},
 			{
 				path: 'discover',
-				Component: DiscoverPage,
+				lazy: async () => {
+					const { default: DiscoverPage } = await import('./routes/discover');
+					return { Component: DiscoverPage };
+				},
 			},
 			{
 				path: 'admin',
-				element: React.createElement(ProtectedRoute, { children: React.createElement(AdminDashboard) }),
+				lazy: async () => {
+					const { default: AdminDashboard } = await import('./routes/admin');
+					return {
+						Component: () =>
+							React.createElement(ProtectedRoute, {
+								children: React.createElement(AdminDashboard),
+							}),
+					};
+				},
 			},
 			{
 				path: 'docs',
-				Component: DocsPage,
+				lazy: async () => {
+					const { default: DocsPage } = await import('./routes/docs');
+					return { Component: DocsPage };
+				},
 			},
 		],
 	},

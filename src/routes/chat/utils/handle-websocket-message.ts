@@ -1,5 +1,5 @@
 import type { WebSocket } from 'partysocket';
-import type { WebSocketMessage, BlueprintType, ConversationMessage, AgentState, PhasicState, BehaviorType, ProjectType, TemplateDetails } from '@/api-types';
+import type { WebSocketMessage, BlueprintType, ConversationMessage, AgentState, CodeGenState, PhasicState, ProjectType, TemplateDetails } from '@/api-types';
 import { deduplicateMessages, isAssistantMessageDuplicate } from './deduplicate-messages';
 import { logger } from '@/utils/logger';
 import { getFileType } from '@/utils/string';
@@ -25,7 +25,7 @@ import type { FileType } from '@/api-types';
 import { toast } from 'sonner';
 import { createRepairingJSONParser } from '@/utils/ndjson-parser/ndjson-parser';
 
-const isPhasicState = (state: AgentState): state is PhasicState => {
+const isPhasicState = (state: AgentState | CodeGenState): state is PhasicState => {
 	const record = state as unknown as Record<string, unknown>;
 	const behaviorType = record.behaviorType;
 	if (behaviorType === 'phasic') return true;
@@ -60,6 +60,8 @@ export interface HandleMessageDeps {
     setStaticIssueCount: React.Dispatch<React.SetStateAction<number>>;
     setIsDebugging: React.Dispatch<React.SetStateAction<boolean>>;
     setWaitingForStoreInfo?: React.Dispatch<React.SetStateAction<boolean>>;
+    setTemplateDetails?: React.Dispatch<React.SetStateAction<TemplateDetails | null>>;
+    setInternalProjectType?: React.Dispatch<React.SetStateAction<ProjectType>>;
 
     // Current state
     isInitialStateRestored: boolean;
@@ -93,6 +95,13 @@ export interface HandleMessageDeps {
         source?: string
     }) => void;
     onVaultUnlockRequired?: (reason: string) => void;
+    clearDeploymentTimeout?: () => void;
+    onPresentationFileEvent?: (evt: {
+        type: 'file_generating' | 'file_chunk' | 'file_generated';
+        path: string;
+        chunk?: string;
+        contents?: string;
+    }) => void;
 }
 
 export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
@@ -134,6 +143,8 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
             setIsPhaseProgressActive,
             setIsDebugging,
             setWaitingForStoreInfo,
+            setTemplateDetails,
+            setInternalProjectType,
             isInitialStateRestored,
             blueprint,
             query,
@@ -144,7 +155,6 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
             projectStages,
             isGenerating,
             urlChatId,
-            behaviorType,
             updateStage,
             sendMessage,
             loadBootstrapFiles,
@@ -174,12 +184,16 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                 }));
                 break;
             }
-            case 'agent_connected': {
-                const { state, templateDetails, previewURL } = message;
-                console.log('Agent connected', state, templateDetails, previewURL);
+	            case 'agent_connected': {
+	                const { state, templateDetails, previewURL } = message;
+	                console.log('Agent connected', state, templateDetails, previewURL);
+
+	                if (state.storeInfoPending) {
+	                    setWaitingForStoreInfo?.(true);
+	                }
 
                 // Set preview URL if provided (e.g., from cached state)
-                if (previewURL) {
+                if (previewURL && !previewUrl) {
                     const finalPreviewURL = getPreviewUrl(previewURL, message.tunnelURL);
                     setPreviewUrl(finalPreviewURL);
                     logger.debug('📺 Preview URL set from agent_connected:', finalPreviewURL);
@@ -236,7 +250,7 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
 
                     if (templateDetails) {
                         // Store template details for manifest parsing and validation
-                        setTemplateDetails(templateDetails);
+                        setTemplateDetails?.(templateDetails);
                         logger.debug('📥 Stored template details:', {
                             renderMode: templateDetails.renderMode,
                             slideDirectory: templateDetails.slideDirectory,
@@ -288,7 +302,7 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                                 name: phase.name,
                                 description: phase.description,
                                 status: phaseStatus,
-                                files: phase.files.map(filesConcept => {
+                                files: phase.files.map((filesConcept: { path: string; purpose: string }) => {
                                     const file = state.generatedFilesMap?.[filesConcept.path];
                                     // File status:
                                     // - completed if it exists in generated files
@@ -354,7 +368,7 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
             case 'template_updated': {
                 const { templateDetails } = message;
                 // Update stored template details
-                setTemplateDetails(templateDetails);
+                setTemplateDetails?.(templateDetails);
                 logger.debug('📥 Template details updated:', {
                     renderMode: templateDetails.renderMode,
                     slideDirectory: templateDetails.slideDirectory,
@@ -377,8 +391,14 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
                 logger.debug('🔄 Agent state update received:', state);
                 
                 // Sync projectType from backend if it changed
-                if (state.projectType) {
-                    setInternalProjectType(state.projectType);
+                if (
+                    state.projectType &&
+                    (state.projectType === 'app' ||
+                        state.projectType === 'workflow' ||
+                        state.projectType === 'presentation' ||
+                        state.projectType === 'general')
+                ) {
+                    setInternalProjectType?.(state.projectType);
                 }
 
                 // Only auto-resume if agent is fully initialized (has blueprint and template)
@@ -636,7 +656,9 @@ export function createWebSocketMessageHandler(deps: HandleMessageDeps) {
             }
 
             case 'deployment_failed': {
-                toast.error('Deployment failed. Please try again.');
+                setIsPreviewDeploying(false);
+                const errorMessage = (message as { error?: string }).error;
+                toast.error(errorMessage || 'Deployment failed. Please try again.');
                 break;
             }
 

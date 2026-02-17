@@ -1,5 +1,4 @@
-import * as _traverse from '@babel/traverse';
-import type { NodePath } from '@babel/traverse';
+import traverseImport, { NodePath } from '@babel/traverse';
 import * as t from '@babel/types';
 import type { FileOutputType, PhaseConceptType } from '../schemas';
 import type { TemplateDetails } from '../../services/sandbox/sandboxTypes';
@@ -7,7 +6,10 @@ import type { InferenceContext } from '../inferutils/config.types';
 import { parseCode, generateCode } from '../../services/code-fixer/utils/ast';
 import { RealtimeCodeFixer } from '../assistants/realtimeCodeFixer';
 
-const traverse = _traverse.default;
+const babelTraverse: typeof traverseImport =
+	typeof (traverseImport as { default?: unknown }).default === 'function'
+		? (traverseImport as { default: typeof traverseImport }).default
+		: traverseImport;
 
 export interface SafetyFinding {
 	message: string;
@@ -112,7 +114,7 @@ function collectSafetyFindings(ast: t.File): SafetyFinding[] {
 	let moduleLevelFunctionDepth = 0; // Track ALL function depth for JSX detection
 	const stack: WalkState[] = [];
 
-	traverse(ast, {
+	babelTraverse(ast, {
 		noScope: true,
 		Function: {
 			enter(path) {
@@ -220,26 +222,21 @@ function collectSafetyFindings(ast: t.File): SafetyFinding[] {
 
 
 function functionBodyContainsSetState(fn: t.ArrowFunctionExpression | t.FunctionExpression): boolean {
-	try {
-		let found = false;
-		const bodyNode: t.Node = t.isBlockStatement(fn.body) ? fn.body : t.expressionStatement(fn.body);
+	let found = false;
+	const bodyNode: t.Node = t.isBlockStatement(fn.body) ? fn.body : t.expressionStatement(fn.body);
 
-		traverse(bodyNode, {
-			noScope: true,
-			CallExpression(path) {
-				const callee = path.node.callee;
-				if (t.isIdentifier(callee) && /^set[A-Z]/.test(callee.name)) {
-					found = true;
-					path.stop();
-				}
-			},
-		});
+	babelTraverse(bodyNode, {
+		noScope: true,
+		CallExpression(path) {
+			const callee = path.node.callee;
+			if (t.isIdentifier(callee) && /^set[A-Z]/.test(callee.name)) {
+				found = true;
+				path.stop();
+			}
+		},
+	});
 
-		return found;
-	} catch (error) {
-		logSafetyGateError('functionBodyContainsSetState failed', error);
-		return false;
-	}
+	return found;
 }
 
 export function detectPreDeploySafetyFindings(code: string): SafetyFinding[] {
@@ -248,14 +245,16 @@ export function detectPreDeploySafetyFindings(code: string): SafetyFinding[] {
 		ast = parseCode(code);
 	} catch (error) {
 		logSafetyGateError('parseCode failed in detectPreDeploySafetyFindings', error);
-		return [{ message: 'Failed to parse file for safety checks; skipping deterministic scan.' }];
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(`Failed to parse file for safety checks: ${message}`);
 	}
 
 	try {
 		return collectSafetyFindings(ast);
 	} catch (error) {
 		logSafetyGateError('collectSafetyFindings failed', error);
-		return [];
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(`Failed to collect pre-deploy safety findings: ${message}`);
 	}
 }
 
@@ -265,7 +264,8 @@ function tryDeterministicSplitObjectSelectorDestructuring(code: string): { code:
 		ast = parseCode(code);
 	} catch (error) {
 		logSafetyGateError('parseCode failed in deterministic split', error);
-		return { code, changed: false };
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(`Failed to parse file during deterministic selector rewrite: ${message}`);
 	}
 
 	let changed = false;
@@ -332,7 +332,7 @@ function tryDeterministicSplitObjectSelectorDestructuring(code: string): { code:
 	}
 
 	try {
-		traverse(ast, {
+		babelTraverse(ast, {
 			noScope: true,
 			VariableDeclaration(path) {
 				// Preserve previous behavior: only rewrite declarations that are direct statements
@@ -351,7 +351,8 @@ function tryDeterministicSplitObjectSelectorDestructuring(code: string): { code:
 		});
 	} catch (error) {
 		logSafetyGateError('deterministic split rewrite failed', error);
-		return { code, changed: false };
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(`Failed deterministic selector rewrite traversal: ${message}`);
 	}
 
 	if (!changed) return { code, changed: false };
@@ -359,7 +360,8 @@ function tryDeterministicSplitObjectSelectorDestructuring(code: string): { code:
 		return { code: generateCode(ast).code, changed: true };
 	} catch (error) {
 		logSafetyGateError('generateCode failed in deterministic split', error);
-		return { code, changed: false };
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(`Failed to generate code after deterministic selector rewrite: ${message}`);
 	}
 }
 
@@ -403,10 +405,11 @@ export async function runPreDeploySafetyGate(args: {
 			realtimeCodeFixer = new RealtimeCodeFixer(args.env, args.inferenceContext);
 		} catch (error) {
 			logSafetyGateError('RealtimeCodeFixer constructor failed', error);
-			return updatedFiles;
+			const message = error instanceof Error ? error.message : String(error);
+			throw new Error(`Failed to initialize realtime code fixer: ${message}`);
 		}
 
-		const fixedResults = await Promise.allSettled(
+		const fixedResults = await Promise.all(
 			needsFixer.map(async ({ file, findings }) => {
 				const issuesText = findings.map((f) => {
 					const loc = f.line
@@ -415,34 +418,26 @@ export async function runPreDeploySafetyGate(args: {
 					return `${loc} - ${f.message}`;
 				});
 
-				try {
-					return await realtimeCodeFixer.run(
-						file,
-						{ query: args.query, template: args.template },
-						// args.phase,
-                        undefined,
-						issuesText,
-						3,
-					);
-				} catch (error) {
-					logSafetyGateError('RealtimeCodeFixer.run threw', error, { filePath: file.filePath });
-					return file;
-				}
+				return await realtimeCodeFixer.run(
+					file,
+					{ query: args.query, template: args.template },
+					// args.phase,
+					undefined,
+					issuesText,
+					3,
+				);
 			}),
 		);
 
 		const fixedByPath = new Map<string, FileOutputType>();
-		for (const res of fixedResults) {
-			if (res.status === 'fulfilled') {
-				fixedByPath.set(res.value.filePath, res.value);
-			} else {
-				logSafetyGateError('RealtimeCodeFixer.run rejected', res.reason);
-			}
+		for (const fixedFile of fixedResults) {
+			fixedByPath.set(fixedFile.filePath, fixedFile);
 		}
 
 		return updatedFiles.map((f) => fixedByPath.get(f.filePath) ?? f);
 	} catch (error) {
 		logSafetyGateError('runPreDeploySafetyGate unexpected failure', error);
-		return args.files;
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(`Pre-deploy safety gate failed: ${message}`);
 	}
 }

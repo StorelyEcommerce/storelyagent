@@ -7,5 +7,9 @@
 		"lib": ["ES2023"]
 	},
 	"include": ["./worker-configuration.d.ts", "./shared", "./worker", "./worker/types"],
-	"exclude": ["**/__tests__/**/*", "**/*.test.ts"]
+	"exclude": [
+		"**/__tests__/**/*",
+		"**/*.test.ts",
+		"./worker/agents/core/simpleGeneratorAgent.ts"
+	]
 }

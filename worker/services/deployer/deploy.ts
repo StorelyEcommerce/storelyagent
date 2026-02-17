@@ -9,7 +9,7 @@ import {
 	validateConfig,
 	buildWorkerBindings,
 } from './utils/index';
-import { parse } from 'jsonc-parser';
+import { parse, printParseErrorCode, ParseError } from 'jsonc-parser';
 
 /**
  * Pure deployment configuration builder
@@ -43,7 +43,18 @@ export function buildDeploymentConfig(
  * Pure function to parse wrangler configuration from content string
  */
 export function parseWranglerConfig(configContent: string): WranglerConfig {
-	const config = parse(configContent) as WranglerConfig;
+	const parseErrors: ParseError[] = [];
+	const config = parse(configContent, parseErrors) as WranglerConfig;
+	if (parseErrors.length > 0) {
+		const details = parseErrors
+			.slice(0, 3)
+			.map((error) => `${printParseErrorCode(error.error)} at offset ${error.offset}`)
+			.join(', ');
+		throw new Error(`Invalid wrangler JSONC: ${details}`);
+	}
+	if (!config || typeof config !== 'object') {
+		throw new Error('Invalid wrangler JSONC: parsed config is empty');
+	}
 	validateConfig(config);
 	return config;
 }

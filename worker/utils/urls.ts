@@ -18,22 +18,77 @@ export function buildUserWorkerUrl(env: Env, deploymentId: string): string {
     return `${protocol}://${deploymentId}.${domain}`;
 }
 
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
+
+/**
+ * Normalize preview URL hostnames to be DNS-safe for local development.
+ */
+export function normalizePreviewUrl(url?: string): string | undefined {
+    if (!url) return undefined;
+
+    try {
+        const parsed = new URL(url);
+        if (parsed.hostname.includes('_')) {
+            parsed.hostname = parsed.hostname.replace(/_/g, '-');
+        }
+        return parsed.toString();
+    } catch {
+        return url;
+    }
+}
+
+/**
+ * Normalize preview URL and align local preview links to the current request origin/port.
+ * Useful when local dev server port changes (e.g. 5173 -> 5174).
+ */
+export function normalizePreviewUrlForRequest(
+    url: string | undefined,
+    requestUrl: string
+): string | undefined {
+    const normalized = normalizePreviewUrl(url);
+    if (!normalized) return normalized;
+
+    try {
+        const preview = new URL(normalized);
+        const request = new URL(requestUrl);
+        const isRequestLoopback = LOOPBACK_HOSTS.has(request.hostname);
+        const isPreviewLoopbackSubdomain = preview.hostname.endsWith('.localhost');
+
+        if (isRequestLoopback && isPreviewLoopbackSubdomain) {
+            preview.protocol = request.protocol;
+            if (request.port) {
+                preview.port = request.port;
+            }
+        }
+
+        return preview.toString();
+    } catch {
+        return normalized;
+    }
+}
+
 /**
  * Migrate a stored preview URL to the current domain.
  * Extracts subdomain from old URL and rebuilds with current getPreviewDomain().
  * Used to handle domain changes without invalidating existing sandbox instances.
  */
-export function migratePreviewUrl(storedUrl: string | undefined, env: Env): string | undefined {
+export function migratePreviewUrl(
+    storedUrl: string | undefined,
+    env: Env,
+    overrideDomain?: string
+): string | undefined {
     if (!storedUrl) return undefined;
 
     try {
         const url = new URL(storedUrl);
         const hostname = url.hostname;
-        const currentDomain = getPreviewDomain(env);
+        const currentDomain = overrideDomain && overrideDomain.trim() !== ''
+            ? overrideDomain.trim()
+            : getPreviewDomain(env);
 
         // Already using current domain
         if (hostname.endsWith(`.${currentDomain}`)) {
-            return storedUrl;
+            return normalizePreviewUrl(storedUrl);
         }
 
         // Extract subdomain by finding the first dot
@@ -43,9 +98,9 @@ export function migratePreviewUrl(storedUrl: string | undefined, env: Env): stri
         const subdomain = hostname.slice(0, firstDotIndex);
 
         // Rebuild with current domain
-        return `${url.protocol}//${subdomain}.${currentDomain}${url.pathname}`;
+        return normalizePreviewUrl(`${url.protocol}//${subdomain}.${currentDomain}${url.pathname}`);
     } catch {
-        return storedUrl;
+        return normalizePreviewUrl(storedUrl);
     }
 }
 
